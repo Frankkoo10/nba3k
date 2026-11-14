@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Basket 3D</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,700;0,800;1,700;1,800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="hud">
+    <div>
+      <p class="eyebrow" id="modeLabel">ENTRENAMIENTO</p>
+      <h1>Basket <span>3D</span></h1>
+      <p class="hint">Tercera persona · física realista · estadio estilo Chase Center</p>
+    </div>
+    <div class="controls">
+      <button id="pauseButton" type="button">❚❚ Pausa <kbd>Esc</kbd></button>
+    </div>
+  </main>
+  <div id="fade"></div>
+  <div id="camName"></div>
+  <div id="pStat"><b id="pName">Jugador</b><div class="ps-bar" id="pStam"><div id="pStamFill"></div></div><span>ENERGÍA</span></div>
+  <div id="message">Elegí los equipos para empezar.</div>
+  <div class="power-wrap">
+    <div class="power-label"><span>FUERZA DEL TIRO</span><span id="powerPercent">0%</span></div>
+    <div class="power-track">
+      <div class="power-fill" id="powerFill"></div>
+      <div class="power-perfect-label">PERFECTO</div>
+      <div class="power-perfect"></div>
+    </div>
+    <div class="power-hint">Soltá el clic cuando la barra toque la línea blanca</div>
+  </div>
+
+  <div id="scorebug">
+    <div class="sb-logo">NBA</div>
+    <div class="sb-team" id="sbA"><img id="lgA" alt=""><b id="abA">LAL</b></div>
+    <div class="sb-score" id="scA">0</div>
+    <div class="sb-score" id="scB">0</div>
+    <div class="sb-team sb-right" id="sbB"><b id="abB">BOS</b><img id="lgB" alt=""></div>
+    <div class="sb-clock"><span id="sbQ">1ST</span><span id="sbT">3:00</span></div>
+    <div class="sb-shot" id="sbShot">24</div>
+    <div class="sb-info" id="sbInfo">EMPATE</div>
+  </div>
+
+  <!-- ===== Menú previo al partido (lo arma prematch.js) ===== -->
+  <section id="pm" hidden></section>
+
+  <div id="trainHud" hidden>
+    <div><b id="tsMakes">0</b><span>ANOTADOS</span></div>
+    <div><b id="tsShots">0</b><span>TIROS</span></div>
+    <div><b id="tsPct">0%</b><span>EFECTIVIDAD</span></div>
+    <div><b id="tsStreak">0</b><span>RACHA</span></div>
+    <div><b id="tsBest">0</b><span>MEJOR RACHA</span></div>
+    <div class="xp"><b id="tsXp">+0</b><span>XP</span></div>
+  </div>
+
+  <!-- ===== Configuración del entrenamiento (la arma trainsetup.js) ===== -->
+  <section id="ts" hidden></section>
+
+  <!-- ===== Menú principal ===== -->
+  <section id="main" hidden>
+    <div class="mm-hero"></div>
+    <div class="mm-left">
+      <div class="mm-title"><small>BASKET 3D</small><h1>COURTSIDE <span>26</span></h1></div>
+      <nav class="mm-list" id="mmList"></nav>
+      <div class="mm-profile">
+        <div class="mp-top"><b id="mpName">Jugador</b><span id="mpLevel">NIVEL 1</span><em id="mpTag" hidden>SIN CUENTA</em></div>
+        <div class="mp-bar"><div id="mpBar"></div></div>
+        <div class="mp-xp"><span id="mpXp">0 / 50 XP</span><button type="button" id="mpLogout">Cerrar sesión</button></div>
+      </div>
+      <div class="mm-hints"><span><kbd>↑</kbd><kbd>↓</kbd> mover</span><span><kbd>Enter</kbd> seleccionar</span></div>
+    </div>
+    <div class="mm-toast" id="mmToast"></div>
+  </section>
+
+  <!-- ===== Casual online: lobby de salas (lo arma online.js) ===== -->
+  <section id="ol" hidden></section>
+  <section id="olModal" hidden></section>
+
+  <!-- ===== Login ===== -->
+  <section id="auth" hidden>
+    <div class="mm-hero dim"></div>
+    <div class="au-card">
+      <small>BASKET 3D</small>
+      <h1>COURTSIDE <span>26</span></h1>
+      <div id="auOffline" hidden>
+        <p>Todavía no conectaste Supabase: editá <code>config.js</code> con tu URL y tu anon key para activar las cuentas.</p>
+        <button type="button" id="auGuest">Continuar sin cuenta (solo pruebas)</button>
+      </div>
+      <form id="auForm">
+        <div class="au-tabs"><button type="button" data-tab="login" class="on">Iniciar sesión</button><button type="button" data-tab="register">Crear cuenta</button></div>
+        <label id="auUserRow" hidden>Nombre de jugador<input id="auUser" type="text" maxlength="20" autocomplete="username" placeholder="ej: Haliburton_0"></label>
+        <label>Email<input id="auEmail" type="email" autocomplete="email" placeholder="vos@email.com"></label>
+        <label>Contraseña<input id="auPass" type="password" autocomplete="current-password" placeholder="mínimo 6 caracteres"></label>
+        <p id="auMsg"></p>
+        <button type="submit" id="auSubmit">Iniciar sesión</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ===== Configuración ===== -->
+  <section id="settings" hidden>
+    <div class="st-box">
+      <h2>CONFIGURACIÓN</h2>
+      <label class="st-row"><span>Sensibilidad del mouse <b id="setSensV">1.0×</b></span><input id="setSens" type="range" min="0.3" max="2.5" step="0.1" value="1"></label>
+      <div class="st-row st-pad"><span>Joystick <b id="padName">no detectado</b></span>
+        <label class="st-row"><span>Zona muerta del stick <b id="setDeadV">0.22</b></span><input id="setDead" type="range" min="0.05" max="0.4" step="0.01" value="0.22"></label>
+        <label class="st-check"><input id="setHints" type="checkbox" checked><span>Mostrar en pantalla qué hace cada botón (cambia según la jugada)</span></label>
+        <label class="st-check"><input id="setRumble" type="checkbox" checked><span>Vibración</span></label></div>
+      <div class="st-row"><button type="button" id="openControls" class="ghost">Controles: teclado y joystick…</button></div>
+      <div class="st-row"><button type="button" id="setFull" class="ghost">Pantalla completa (evita que Ctrl+W cierre la pestaña)</button></div>
+      <div class="st-row st-btns"><button type="button" id="setLogout" class="ghost">Cerrar sesión</button><button type="button" id="setClose">Listo</button></div>
+    </div>
+  </section>
+
+  <!-- ===== Pausa ===== -->
+  <section id="pause" hidden>
+    <div class="pz-bg"></div>
+    <div class="pz-left">
+      <small id="pzMode">PARTIDO CASUAL</small>
+      <h2>PAUSA</h2>
+      <nav class="pz-list" id="pzList"></nav>
+      <div class="pz-hints" id="pzHint"></div>
+    </div>
+    <div class="pz-right" id="pzInfo"></div>
+  </section>
+
+  <!-- ===== Controles (lo arma controls.js) ===== -->
+  <section id="controls" hidden></section>
+  <div id="padHud" hidden></div>
+  <div id="mpHud" hidden></div>
+  <div id="mpBars" hidden></div>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
