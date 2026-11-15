@@ -9,6 +9,8 @@
    La dificultad (fácil / difícil / extremo) cambia velocidad, tiempo de reacción, puntería, agresividad defensiva, etc.
    ========================================================================== */
 
+import { shotMul, deepMul, shootBias, tend } from './skill.js';
+
 const hyp = Math.hypot, rnd = Math.random;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const COURT_X = 7.62, COURT_Z = 14.325;
@@ -89,7 +91,8 @@ export function shotQuality(G, a, x, z) {
   if (three && !a.info.detailed) q *= a.slot <= 2 ? 1.08 : 0.82;           // sin atributos 2K: los de afuera tiran de tres; los pivots, menos
   // Con atributos 2K se usa el rating de la zona: cerca del aro (cercano + bandeja), media distancia o triple.
   const zone = three ? a.info.three : d < 2.5 ? (a.info.close + a.info.layup) / 2 : a.info.mid;
-  q *= 1 + ((a.info.detailed ? zone : a.info.shooting) - 70) * 0.012 * (d < 2.5 ? 0.4 : 1);
+  q *= shotMul(a.info.detailed ? zone : a.info.shooting, d < 2.5 ? 0.4 : 1);
+  if (a.info.detailed && d >= 8.8 && !corner) q *= deepMul(a.info.three);   // más allá del arco normal: solo los de rango largo (Curry) lo intentan con chances
   const open = clamp((nearestOpp(G, a, x, z).d - 0.7) / 2.0, 0, 1);
   q *= 0.75 + 0.25 * open;
   q *= 0.82 + 0.18 * clamp(a.stam / 0.5, 0, 1);
@@ -107,7 +110,7 @@ export function bestPass(G, a, inbound = false) {
     let risk = 0;
     for (const o of opps) { const dist = distToSeg(o.pos.x, o.pos.z, a.pos.x, a.pos.z, t.pos.x, t.pos.z); if (dist < 0.8) risk = Math.max(risk, 1 - dist / 0.8); }
     const q = shotQuality(G, t, t.pos.x, t.pos.z), prog = (dSelf - hyp(t.pos.x, hoop.hz - t.pos.z)) / 12;
-    const score = q + prog * (inbound ? 0.16 : 0.06) - risk * 0.38 - (d > 14 ? 0.05 : 0);
+    const score = q + prog * (inbound ? 0.16 : 0.06) - risk * 0.38 - (d > 14 ? 0.05 : 0) + ((t.info?.ovr ?? 75) - 75) * 0.002;     // las estrellas reciben un poco más la pelota
     if (!best || score > best.score) best = { t, score };
   }
   return best;
@@ -152,7 +155,7 @@ function handler(G, a, dt, I) {
     ai.think = prof.think * (0.7 + rnd() * 0.6);
     const q = shotQuality(G, a, px, pz), bp = bestPass(G, a);
     const pace = prof.pace ?? 1, three = (dh >= 7.0 && dh < 9.0) || (Math.abs(px) >= 6.3 && dh > 5.5 && dh < 8);
-    let thr = prof.shotThr - (a.info.shooting - 70) * 0.002 + (ai.style - 0.5) * 0.06 - Math.min(0.1, ai.holdT * 0.012 * pace)
+    let thr = prof.shotThr + shootBias(a.info, three, dh) + (ai.style - 0.5) * 0.06 - Math.min(0.1, ai.holdT * 0.012 * pace)
       + (three ? (prof.threeBias ?? 0) : dh < 6.5 ? (prof.insideBias ?? 0) : 0);          // estilo del equipo: triples / cerca del aro
     let plan = 'drive';
     if (sc < 3.0 && dh < 14) plan = 'shoot';
@@ -209,16 +212,16 @@ function defend(G, a, dt, I) {
   ai.stealT -= dt;
   if (h && h.team !== a.team && ctx.primary[a.team] === a) {       // ---- marca a la pelota
     const hx = h.pos.x, hzz = h.pos.z, dxh = 0 - hx, dzh = own.hz - hzz, dd = hyp(dxh, dzh) || 1;
-    const gap = 0.95 + (1 - prof.tight) * 1.1 - (h.state === 'charge' ? 0.25 : 0);
+    const gap = 0.95 + (1 - prof.tight) * 1.1 - (h.state === 'charge' ? 0.25 : 0) - clamp(((a.info.perD ?? 70) - 70) * 0.004, -0.15, 0.12);   // el buen defensor perimetral marca más pegado
     const k = 0.22 * prof.react;
     dirTo(I, a, hx + dxh / dd * gap + h.vel.x * k, hzz + dzh / dd * gap + h.vel.z * k, { full: true, sprint: true, stop: 0.12 });
     I.face = Math.atan2(hx - a.pos.x, hzz - a.pos.z);
     const dist = hyp(hx - a.pos.x, hzz - a.pos.z);
     if (dist < 1.3 && ai.stealT <= 0 && h.state === 'dribble' && a.grounded && !a.act && a.stunT <= 0 && !a.tired) {
-      ai.stealT = 0.6 + rnd() * 0.9; if (rnd() < prof.stealAtt) G.startSteal(a);
+      ai.stealT = 0.6 + rnd() * 0.9; if (rnd() < prof.stealAtt * tend(a.info.steal)) G.startSteal(a);
     }
     if (h.state === 'charge' || h.state === 'shoot' || h.state === 'dunk') {          // taponar: se decide una vez por tiro, con reacción
-      if (ai.seenShot !== h.shotId) { ai.seenShot = h.shotId; ai.blockPlan = dist < 2.1 && rnd() < prof.blockAtt * (h.state === 'dunk' ? 0.7 : 1); ai.blockDelay = 0.03 + (1 - prof.react) * 0.14 + rnd() * 0.06; }
+      if (ai.seenShot !== h.shotId) { ai.seenShot = h.shotId; ai.blockPlan = dist < 2.1 && rnd() < prof.blockAtt * tend(a.info.block) * (h.state === 'dunk' ? 0.7 : 1); ai.blockDelay = 0.03 + (1 - prof.react) * 0.14 + rnd() * 0.06; }
       if (ai.blockPlan && a.grounded && !a.act && a.stunT <= 0 && (h.state === 'shoot' ? h.shootT >= ai.blockDelay : h.state === 'dunk' && h.D.t >= 0.06 + ai.blockDelay)) { ai.blockPlan = false; G.startBlock(a); }
     }
     return;
@@ -240,7 +243,7 @@ function defend(G, a, dt, I) {
   I.face = toMark < 3.2 ? Math.atan2(mx - a.pos.x, mz - a.pos.z) : Math.atan2(B.bp.x - a.pos.x, B.bp.z - a.pos.z);
   // si el que tiene la pelota va a tirar o a entrar, el ayudante también salta a taponar
   if (h && h.team !== a.team && ctx.helper[a.team] === a && ai.helping && (h.state === 'shoot' || h.state === 'dunk')) {
-    if (ai.seenShot !== h.shotId) { ai.seenShot = h.shotId; ai.blockPlan = hyp(h.pos.x - a.pos.x, h.pos.z - a.pos.z) < 2.4 && rnd() < prof.blockAtt * 0.8; ai.blockDelay = 0.05 + (1 - prof.react) * 0.14 + rnd() * 0.06; }
+    if (ai.seenShot !== h.shotId) { ai.seenShot = h.shotId; ai.blockPlan = hyp(h.pos.x - a.pos.x, h.pos.z - a.pos.z) < 2.4 && rnd() < prof.blockAtt * tend(a.info.block) * 0.8; ai.blockDelay = 0.05 + (1 - prof.react) * 0.14 + rnd() * 0.06; }
     if (ai.blockPlan && a.grounded && !a.act && (h.state === 'shoot' ? h.shootT >= ai.blockDelay : h.state === 'dunk' && h.D.t >= 0.06 + ai.blockDelay)) { ai.blockPlan = false; G.startBlock(a); }
   }
 }

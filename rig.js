@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
-import { PROF, HEAD, loft, cutNeckline, strip, decal, headMesh, faceColors, faceZ, hairMesh } from './rig-geo.js';
+import { PROF, HEAD, HAIR, loft, cutNeckline, strip, decal, headMesh, faceColors, faceZ, hairMesh } from './rig-geo.js';
 
 /* ============================================================================
    Cuerpo de jugador con proporciones humanas (estilo PS2: pocos polígonos, pero cuerpo de persona).
@@ -42,6 +42,12 @@ const geo = () => {
   return G;
 };
 const hairGeo = style => (geo().hair[style] ??= mkGeo(hairMesh(style)));
+const capsCache = new Map();
+const caps = (r, l) => { const k = `${r}|${l}`; if (!capsCache.has(k)) capsCache.set(k, new THREE.CapsuleGeometry(r, l, 3, 8)); return capsCache.get(k); };
+const COMP_GEO = new THREE.CylinderGeometry(0.053, 0.041, 0.21, 16, 1, true);    // manga de compresión del antebrazo
+const BAND_GEO = new THREE.TorusGeometry(1, 0.17, 8, 40);                        // vincha (se escala al tamaño de la cabeza)
+/* Peinados largos o con volumen: se arman con la base de un peinado corto + piezas extra (rodete, cola, trenzas, rizos). */
+const HAIR_CAP = { 5: 2, 6: 1, 7: 1, 8: 9 };
 
 const shell = (parent, geometry, material, x = 0, y = 0, z = 0) => {
   const m = new THREE.Mesh(geometry, material); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m;
@@ -150,7 +156,7 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
   const jm = mat(0xffffff, 0.65), sm = mat(0x111111, 0.7), shoeM = mat(0xffffff, 0.5), skin = mat(skinColor, 0.62);
   const soleM = mat(0xf2f2f2, 0.6), sockM = mat(0xffffff, 0.85), lacesM = mat(0xf4f4f4, 0.7);
   const faceM = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.6, vertexColors: true });
-  const hairM = mat(hairColor, 0.92);
+  const hairM = mat(hairColor, 0.92), compM = mat(0x111111, 0.8); compM.side = THREE.DoubleSide;
   const bulkMeshes = [];                                           // piezas que engordan/adelgazan con la contextura
 
   const hips = new THREE.Group(); root.add(hips);                  // sube y baja (altura de la cadera)
@@ -175,6 +181,9 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
     sphere(head, eyeDark, [0.0068, 0.0068, 0.004], [side * 0.034, HEAD.cy + 0.023, ez + 0.0042]);
   }
   const hair = new THREE.Mesh(hairGeo(1), hairM); hair.position.y = HEAD.cy; hair.castShadow = true; head.add(hair);
+  const hairExtra = new THREE.Group(); hairExtra.position.y = HEAD.cy; head.add(hairExtra);     // rodete, cola, trenzas, rizos
+  const bandM = mat(0xffffff, 0.8), band = new THREE.Mesh(BAND_GEO, bandM);                       // vincha
+  band.rotation.x = Math.PI / 2; band.castShadow = true; band.visible = false; head.add(band);
 
   /* ---- brazos ---- */
   const arm = x => {
@@ -186,8 +195,9 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
     sphere(el, skin, [0.044, 0.046, 0.044], [0, 0, 0]);
     const sleeve = shell(sh, g.sleeve, jm); sleeve.visible = false;
     const h = makeHand(el, x > 0 ? -1 : 1, skin);
-    bulkMeshes.push(ua, fa, sleeve);              // (el deltoides es una esfera unitaria escalada: no se toca)
-    return [sh, el, h.hand, h.fingers, sleeve];
+    const comp = new THREE.Mesh(COMP_GEO, compM); comp.position.y = -0.13; comp.visible = false; comp.castShadow = true; el.add(comp);   // manga de compresión
+    bulkMeshes.push(ua, fa, sleeve, comp);        // (el deltoides es una esfera unitaria escalada: no se toca)
+    return [sh, el, h.hand, h.fingers, sleeve, comp];
   };
   /* ---- piernas ---- */
   const legInfo = [];
@@ -210,7 +220,7 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
     return [th, kn, ft];
   };
   const [legL, kneeL, ftL] = leg(0.1), [legR, kneeR, ftR] = leg(-0.1);   // la mano derecha está en -x (el modelo mira a +z)
-  const [shL, elL, hL, fL, slvL] = arm(0.23), [shR, elR, hR, fR, slvR] = arm(-0.23);
+  const [shL, elL, hL, fL, slvL, cmpL] = arm(0.23), [shR, elR, hR, fR, slvR, cmpR] = arm(-0.23);
   const uniform = makeUniformDetails(torso, legInfo, jm, sm);
 
   const base = { shx: 0.23, legx: 0.1 };
@@ -221,15 +231,46 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
   /* Piel: cuerpo y cara (la cara tiene colores por vértice que se multiplican por este tono). */
   R.setSkin = hex => { skin.color.setHex(hex); faceM.color.setHex(hex); };
   R.skin.color.setHex(skinColor);
-  /* Aspecto: peinado y barba según una semilla (el nombre del jugador). */
+  /* Aspecto: peinado, color de pelo, barba, vincha y manga. Lo que no se indica sale de una semilla (el nombre del jugador).
+     o = { hair (0-8), hairColor ('#rrggbb'), beard (0-2), band ('#rrggbb'), sleeve ('L' | 'R' | 'B'), sleeveColor } */
+  const BROWNS = [0x2b1d14, 0x4a3222, 0x7a5a36, 0x15120f];
+  const clearExtra = () => { while (hairExtra.children.length) hairExtra.remove(hairExtra.children[0]); };
+  const strands = (n, t0, t1, y, rr, len, r, tilt, hsh) => {                   // mechones colgando alrededor de la nuca y los costados
+    for (let i = 0; i < n; i++) {
+      const t = t0 + (t1 - t0) * (n === 1 ? 0.5 : i / (n - 1)), jit = (((hsh >> (i % 20)) & 3) - 1.5) * 0.02;
+      const x = Math.sin(t) * rr[0], z = Math.cos(t) * rr[1], m = new THREE.Mesh(caps(r, len), hairM);
+      m.position.set(x, y - len / 2 - r, z); m.rotation.set(Math.cos(t) * -tilt + jit, 0, Math.sin(t) * -tilt * 0.8 - jit);
+      m.castShadow = true; hairExtra.add(m);
+    }
+  };
   R.setLook = (seed, o = {}) => {
     const h = hash(seed), style = o.hair ?? HAIR_STYLES[h % HAIR_STYLES.length], beard = o.beard ?? BEARDS[(h >> 5) % BEARDS.length];
-    hair.visible = style > 0; if (style > 0) hair.geometry = hairGeo(style);
+    const cap = HAIR_CAP[style] ?? style;
+    hair.visible = cap > 0; if (cap > 0) hair.geometry = hairGeo(cap);
     setBeard(beard);
+    // color del pelo: el indicado; si no, negro (o marrones para los de piel clara)
+    if (o.hairColor) hairM.color.set(o.hairColor); else hairM.color.setHex(skin.color.r > 0.6 ? BROWNS[(h >> 9) % BROWNS.length] : 0x15120f);
+    // piezas extra
+    clearExtra();
+    if (style === 6) sphere(hairExtra, hairM, [0.050, 0.050, 0.050], [0, 0.098, -0.086]);                                  // rodete
+    else if (style === 7) { const m = new THREE.Mesh(caps(0.021, 0.13), hairM); m.position.set(0, -0.038, -0.122); m.rotation.x = 0.24; m.castShadow = true; hairExtra.add(m); }   // cola
+    else if (style === 5) strands(15, 1.15, Math.PI * 2 - 1.15, 0.050, [0.084, 0.101], 0.15, 0.011, 0.10, h);               // trenzas
+    else if (style === 8) { strands(17, 1.0, Math.PI * 2 - 1.0, 0.060, [0.092, 0.108], 0.10, 0.021, 0.16, h); strands(8, 1.7, Math.PI * 2 - 1.7, 0.100, [0.060, 0.074], 0.07, 0.022, 0.10, h >> 3); }   // rizos largos
+    // vincha (se ajusta al tamaño del pelo; pelado = cráneo)
+    band.visible = !!o.band;
+    if (o.band) {
+      bandM.color.set(o.band);
+      const H = cap > 0 ? (HAIR[cap] || HAIR[1]) : { s: 1.0, sy: 1.0 }, y = 0.072, ry = HEAD.ry * H.sy, f = Math.sqrt(Math.max(0.05, 1 - (y / ry) ** 2));
+      band.position.y = HEAD.cy + y; band.scale.set(HEAD.rx * H.s * f + 0.005, HEAD.rz * H.s * f + 0.005, 0.075);
+    }
+    // manga de compresión en el antebrazo
+    const sl = String(o.sleeve || '').toUpperCase();
+    compM.color.set(o.sleeveColor || '#111111');
+    cmpL.visible = sl === 'L' || sl === 'B'; cmpR.visible = sl === 'R' || sl === 'B';
   };
-  /* Contextura: 0.9 (flaco) … 1.12 (corpulento). Engancha hombros y caderas al nuevo ancho. */
+  /* Contextura: 0.86 (flaco) … 1.18 (corpulento). Engancha hombros y caderas al nuevo ancho. */
   R.setBuild = k => {
-    k = Math.min(1.14, Math.max(0.88, k));
+    k = Math.min(1.18, Math.max(0.86, k));
     bulkMeshes.forEach(m => { m.scale.set(k, 1, 1 + (k - 1) * 0.8); });
     shL.position.x = base.shx * (0.4 + 0.6 * k); shR.position.x = -base.shx * (0.4 + 0.6 * k);
     legL.position.x = base.legx * k; legR.position.x = -base.legx * k; R.build = k;

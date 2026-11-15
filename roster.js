@@ -1,4 +1,5 @@
 import * as Auth from './auth.js';
+import { knownLook, lookOf } from './looks.js';
 
 /* ============================================================================
    Planteles. Si Supabase está configurado se leen de las tablas `teams` y `players`
@@ -68,7 +69,8 @@ export function normalizePlayer(r, team, i = 0) {
   const heightIn = has(r.height_in) ? clampN(r.height_in, 67, 90, 78) : null;
   const height = heightIn ? Math.round(heightIn * 2.54) : clampN(r.height_cm, 170, 230, HEIGHT[pos]);
   const weightLb = has(r.weight_lb) ? clampN(r.weight_lb, 130, 340, 220) : null;
-  const o = OFF[pos], at = {};
+  const kn = knownLook(r.name), o = OFF[pos], at = {};
+  const dbSkin = has(r.skin_tone) && !(kn && Number(r.skin_tone) === 2);      // skin_tone=2 es el valor por defecto de la tabla: si el jugador es conocido, manda la tabla de looks.js
   ATTRS.forEach(([key, col], k) => {
     const legacy = col === 'speed' ? r.speed : null;
     at[key] = has(r[col]) ? clampN(r[col], 25, 99, ovr) : has(legacy) ? clampN(legacy, 25, 99, ovr) : clampN(ovr + o[k], 25, 99, ovr);
@@ -89,7 +91,8 @@ export function normalizePlayer(r, team, i = 0) {
     id: r.id ?? `${team.ab}-${i}`, team: team.ab, name: r.name || `${POS_NAME[pos]} ${team.ab}`,
     number: clampN(r.number, 0, 99, i + 1), pos, starter: !!r.is_starter, ovr, ...at, ...agg, detailed,
     height, heightIn: heightIn ?? Math.round(height / 2.54), weightLb, wingspanIn: has(r.wingspan_in) ? clampN(r.wingspan_in, 67, 100, null) : null,
-    skin: clampN(r.skin_tone, 0, SKIN_TONES.length - 1, hash(team.ab + i) % SKIN_TONES.length),
+    skin: dbSkin ? clampN(r.skin_tone, 0, SKIN_TONES.length - 1, 2) : kn ? kn.skin : hash(team.ab + i) % SKIN_TONES.length,
+    look: lookOf(r, kn),
     generic: !!r.generic,
   };
 }

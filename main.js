@@ -7,6 +7,7 @@ import * as UI from './ui.js';
 import { queueXp, flushXp, signOut } from './auth.js';
 import { makeRig, mkJ, applyPose } from './rig.js';
 import { fallbackRoster, loadRoster, SKIN_TONES } from './roster.js';
+import { buildFor, scaleFor } from './looks.js';
 import * as PM from './prematch.js';
 import * as Online from './online.js';
 import { SnapBuffer, STATES, MODES, SNAP_HZ, r2, r3, lerpAngle } from './netsync.js';
@@ -15,6 +16,7 @@ import * as Pad from './gamepad.js';
 import * as KB from './keyboard.js';
 import * as Pause from './pause.js';
 import { solveBank, solveRoll, solveBounce } from './shotsim.js';
+import { speedMul, accelMul, drainMul, recoverMul, jumpMul, canDunk, releaseSkill, reboundScore } from './skill.js';
 import { PROFILES, aiPrepare, aiThink, newAIState, shotQuality, bestPass, styledProfile } from './ai.js';
 
 /* ============ Partido online: quién soy ============ */
@@ -240,16 +242,10 @@ function drawLabel(a) {
   } else g.fillText(`#${n.number}  ${last}`, 128, 33);
   a.labelTex.needsUpdate = true;
 }
-const BUILD = { PG: 0.94, SG: 0.98, SF: 1.0, PF: 1.06, C: 1.11 };   // contextura según la posición
-function buildFor(info) {                                  // contextura: con peso real sale del IMC; si no, de la posición
-  if (!info.weightLb) return BUILD[info.pos] ?? 1;
-  const kg = info.weightLb * 0.4536, m = info.height / 100, bmi = kg / (m * m);
-  return clamp(1 + (bmi - 24.5) * 0.04, 0.9, 1.14);
-}
 function setInfo(a, info) {
-  a.info = info; a.R.setSkin(SKIN_TONES[info.skin] ?? SKIN); a.R.setLook(info.name || info.id); a.R.setBuild(buildFor(info)); a.R.setUniformInfo?.(info);
-  a.scale = clamp(info.height / 198, 0.93, 1.08); a.R.root.scale.setScalar(a.scale);
-  a.spdMul = 0.93 + clamp((info.speed - 60) * 0.0035, -0.05, 0.14);
+  a.info = info; a.R.setSkin(SKIN_TONES[info.skin] ?? SKIN); a.R.setLook(info.name || info.id, info.look); a.R.setBuild(buildFor(info)); a.R.setUniformInfo?.(info);
+  a.scale = scaleFor(info); a.R.root.scale.setScalar(a.scale);
+  a.spdMul = speedMul(info); a.accMul = accelMul(info); a.drainM = drainMul(info); a.recM = recoverMul(info); a.jumpM = jumpMul(info);   // físico según los atributos (skill.js)
   drawLabel(a);
 }
 function applyRosters(rA, rB) {
@@ -779,7 +775,7 @@ function startDunk(a, H, dmode, kind) {
   D.rel = L ? (ds ? ds.rel : 0.30) : D.s0 + 0.12;
   D.corr.set(0, 0, 0); D.pw.copy(a.pos); a.state = 'dunk'; a.shotId = ++shotCounter; a.side = 1;
   const cst = contestOf({ ...a, aimHoop: H, pos: a.pos, team: a.team }), hard = (L && ds?.hard) || 0;
-  D.miss = L && Math.random() < (isHum(a) ? cst * 0.4 : clamp(0.28 - (a.info.layup - 70) * 0.004 - (prof(a).acc - 1) * 0.2 + cst * 0.4, 0.04, 0.7)) + hard;
+  D.miss = L && Math.random() < (isHum(a) ? clamp((72 - a.info.layup) * 0.005 + cst * 0.4 * (1.25 - 0.5 * clamp((a.info.strength - 25) / 74, 0, 1)), 0, 0.7) : clamp(0.28 - (a.info.layup - 70) * 0.006 - (prof(a).acc - 1) * 0.2 + cst * 0.4 * (1.25 - 0.5 * clamp((a.info.strength - 25) / 74, 0, 1)), 0.04, 0.7)) + hard;
   hoops.forEach(h => h.done = false); if (a === ctrl) attempt();
   if (!L) rollShootingFoul(a, 'dunk', false, H);
 }
@@ -810,7 +806,7 @@ function tryDunk(a, mod) {
     if (_dv.x * Math.sin(a.h) + _dv.z * Math.cos(a.h) > 0.6 && d <= 4.0 && (!best || d < best.d)) best = { H, d };
   }
   if (!best) return false;
-  if (sp >= 4.8 && best.d >= 1.6) { const k = pickDunk(a, mod); if (DUNKS[k]) startDunk(a, best.H, 'dunkX', k); else startDunk(a, best.H, k); return true; }
+  if (sp >= 4.8 && best.d >= 1.6 && canDunk(a.info)) { const k = pickDunk(a, mod); if (DUNKS[k]) startDunk(a, best.H, 'dunkX', k); else startDunk(a, best.H, k); return true; }
   if (best.d <= 3.0 && (sp >= 1.5 || best.d <= 2.2)) { startDunk(a, best.H, 'layup', pickLay(a, mod, best.d)); return true; }
   return false;
 }
@@ -833,7 +829,7 @@ function checkDunkBlocks() {
 function resolveDunkBlock(s, d) {                      // el defensor llegó a la pelota del que está mateando / haciendo la bandeja: ¿tapón limpio, tapón con falta, falta sin tapón o nada?
   const D = s.D; D.bl = true;
   const lay = D.mode === 'layup', rb = d.info.block ?? 60, rs = lay ? (s.info.layup ?? 70) : (s.info.dunkD ?? 70);
-  const pB = clamp(0.42 + (rb - rs) / 160 + (d.scale - s.scale) * 0.8 - (lay ? 0 : 0.08) + (isHum(d) ? 0.1 : 0), 0.12, 0.85);
+  const pB = clamp(0.42 + (rb - rs) / 160 + (d.scale - s.scale) * 0.8 + ((d.jumpM ?? 1) - (s.jumpM ?? 1)) * 1.2 - (lay ? 0 : 0.08) + (isHum(d) ? 0.1 : 0), 0.12, 0.85);
   const blocked = Math.random() < pB;
   const foul = !B.foulPending && Math.random() < clamp((blocked ? 0.30 : 0.22) + (rs - rb) / 400, 0.1, 0.5);
   if (foul) { B.foulPending = { type: lay ? 'layup' : 'dunk', shooter: s, fouler: d, three: false, age: 0 }; whistle(); say(blocked ? `¡TAPÓN con falta de ${lastN(d)} sobre ${lastN(s)}!` : `¡Falta de ${lastN(d)} sobre ${lastN(s)}!`); }
@@ -897,16 +893,16 @@ function startCrossover(a, style) {
   if (style === 'flash') { const pool = MOVE_KEYS.filter(k => k !== a.lastMove); style = pool[Math.floor(Math.random() * pool.length)]; a.lastMove = style; }
   const mv = style ? MOVES[style] : null, fx = Math.sin(a.h), fz = Math.cos(a.h);
   if (mv) {                                         // dribleo con lujo: más largo, gasta más energía y confunde más al defensor
-    a.moveKind = style; a.moveDur = mv.dur; a.moveT = mv.dur; a.crossT = mv.dur; a.moveCd = mv.dur + 0.1; a.stam = Math.max(0, a.stam - 0.07); a.spinH0 = a.h;
+    a.moveKind = style; a.moveDur = mv.dur; a.moveT = mv.dur; a.crossT = mv.dur; a.moveCd = mv.dur + 0.1; a.stam = Math.max(0, a.stam - 0.07 * (a.drainM ?? 1)); a.spinH0 = a.h;
     if (style !== 'stepback') a.side *= -1;
     else { a.vel.x -= fx * 3.4; a.vel.z -= fz * 3.4; a.sbT = 0.9; }          // stepback: se despega hacia atrás y queda con espacio para tirar
     if (isHum(a)) say(`¡Dribleo ${mv.label}!`);
-  } else { a.moveKind = null; a.moveT = 0; a.side *= -1; a.crossT = 0.35; a.moveCd = 0.4; a.stam = Math.max(0, a.stam - 0.045); }
+  } else { a.moveKind = null; a.moveT = 0; a.side *= -1; a.crossT = 0.35; a.moveCd = 0.4; a.stam = Math.max(0, a.stam - 0.045 * (a.drainM ?? 1)); }
   for (const d of T[1 - a.team].court) {                // un cruce puede dejar sentado al defensor
     if (!d.active || !d.grounded || d.stunT > 0) continue;
     const dx = d.pos.x - a.pos.x, dz = d.pos.z - a.pos.z, dd = Math.hypot(dx, dz);
     if (dd < 1.7 && dd > 0.1 && (dx * fx + dz * fz) / dd > 0.3) {
-      const p = clamp((0.28 + (a.info.handle - d.info.perD) / 120 - (oppTeam(d.team) ? (prof(d).tight - 0.5) * 0.2 : 0)) * (mv && style !== 'stepback' ? 1.4 : 1), 0.08, 0.75);
+      const p = clamp((0.28 + (a.info.handle - d.info.perD) / 85 - (oppTeam(d.team) ? (prof(d).tight - 0.5) * 0.2 : 0)) * (mv && style !== 'stepback' ? 1.4 : 1), 0.08, 0.75);
       if (Math.random() < p) { d.stunT = 0.75; if (isHum(a) && !isHum(d)) say('¡Lo dejaste sentado!'); }
     }
   }
@@ -935,7 +931,7 @@ function resolveSteal(a) {
     commitFoul({ type: 'reach', fouler: a, victim: h, x: h.pos.x, z: h.pos.z });
     return;
   }
-  let p = 0.30 + (a.info.steal - h.info.handle) * 0.004 + (oppTeam(a.team) ? prof(a).stealSucc : 0);
+  let p = 0.30 + (a.info.steal - h.info.handle) * 0.0065 + (a.info.speed - h.info.speed) * 0.002 + (oppTeam(a.team) ? prof(a).stealSucc : 0);
   if (h.state === 'dribble') { p += BP.y < 0.75 ? 0.12 : -0.08; if (h.crossT > 0 || h.dribMode) p -= 0.12; } else p *= 0.5;
   if (h.stam < 0.25) p += 0.12; if (a.stam < 0.2) p -= 0.1; if (h.stunT > 0) p += 0.15;
   if (oppTeam(h.team)) p *= prof(h).protect > 1 ? 1 / prof(h).protect : 2 - prof(h).protect;
@@ -965,7 +961,7 @@ function startBlock(a, kind) {
       else { const r = Math.random(); k = r < 0.5 ? 'two' : r < 0.78 ? 'spike' : 'one'; }
     }
   }
-  a.act = 'block'; a.actT = 0.95; a.vy = k === 'chase' ? 4.9 : 4.7; a.grounded = false; a.jumpWind = 0; a.blockKind = k; a.blockHand = hand; a.blkHit = 0; return true;
+  a.act = 'block'; a.actT = 0.95; a.vy = (k === 'chase' ? 4.9 : 4.7) * (a.jumpM ?? 1); a.grounded = false; a.jumpWind = 0; a.blockKind = k; a.blockHand = hand; a.blkHit = 0; return true;
 }
 
 /* ============ Física del jugador (la misma para vos y para los bots) ============ */
@@ -982,7 +978,7 @@ function updateAgent(a, dt, I) {
   if (a.act === 'steal' && !a.stealDone && a.actT < 0.32) resolveSteal(a);
   // dribleo veloz con Ctrl mantenido: cruces automáticos mientras te movés
   a.dribMode = holds && a.state === 'dribble' && I.dribHold && !a.tired && a.stam > 0.05 && Math.hypot(a.vel.x, a.vel.z) > 1.5;
-  if (a.dribMode) { a.autoCross -= dt; if (a.autoCross <= 0) { a.autoCross = 0.55; startCrossover(a); } a.stam = Math.max(0, a.stam - 0.03 * dt * prof(a).stamina); }
+  if (a.dribMode) { a.autoCross -= dt; if (a.autoCross <= 0) { a.autoCross = 0.55; startCrossover(a); } a.stam = Math.max(0, a.stam - 0.03 * dt * prof(a).stamina * (a.drainM ?? 1)); }
   const sprintSp = a.state === 'dribble' ? 6.6 : 7.0;
   let maxSp = I.sprint && !a.tired ? sprintSp : 4.4;
   if (human && !I.sprint && I.sprintAmt > 0 && !a.tired) maxSp = lerp(4.4, sprintSp, I.sprintAmt * 0.8);       // gatillo a medias = trote
@@ -995,7 +991,7 @@ function updateAgent(a, dt, I) {
   const prev = a.vel.clone();
   if (hasWish && maxSp > 0) {
     _dv.copy(wish).multiplyScalar(maxSp).sub(a.vel);
-    const rate = (a.vel.dot(wish) < -0.5 ? 26 : 14) * (a.grounded ? 1 : 0.12) * (a.dribMode || a.crossT > 0 ? 1.4 : 1) * (a.stunT > 0 ? 0.5 : 1);
+    const rate = (a.vel.dot(wish) < -0.5 ? 26 : 14) * (a.accMul ?? 1) * (a.grounded ? 1 : 0.12) * (a.dribMode || a.crossT > 0 ? 1.4 : 1) * (a.stunT > 0 ? 0.5 : 1);
     a.vel.add(_dv.setLength(Math.min(_dv.length(), rate * dt)));
   } else if (a.grounded) {
     const sp = a.vel.length(), d = Math.min(sp, (a.state === 'shoot' ? 9 : 17) * dt);
@@ -1007,10 +1003,10 @@ function updateAgent(a, dt, I) {
   else { const mx = holds ? 0.7 : 0.35; a.pos.x = clamp(a.pos.x, -COURT_X + mx, COURT_X - mx); a.pos.z = clamp(a.pos.z, -COURT_Z + mx, COURT_Z - mx); }
 
   // cansancio
-  const sp = Math.hypot(a.vel.x, a.vel.z), sm = prof(a).stamina;
+  const sp = Math.hypot(a.vel.x, a.vel.z), sm = prof(a).stamina * (a.drainM ?? 1), rm = a.recM ?? 1;   // resistencia: el que tiene más se cansa más lento y recupera más rápido
   if (!dead) {
-    if (sp > 5.2 && I.sprint) a.stam -= 0.075 * dt * sm; else if (sp > 2.0) a.stam -= 0.014 * dt * sm; else if (sp < 1) a.stam += 0.04 * dt;
-  } else a.stam += 0.10 * dt;
+    if (sp > 5.2 && I.sprint) a.stam -= 0.075 * dt * sm; else if (sp > 2.0) a.stam -= 0.014 * dt * sm; else if (sp < 1) a.stam += 0.04 * dt * rm;
+  } else a.stam += 0.10 * dt * rm;
   a.stam = clamp(a.stam, 0, 1);
   if (!opts.fatigue) { a.stam = 1; a.tired = false; }                // cansancio apagado
   if (!a.tired && a.stam < 0.08) { a.tired = true; if (isHum(a) && a.hum.dev !== 'net') say('¡Estás cansado! Frená un momento para recuperar energía.'); }
@@ -1029,7 +1025,7 @@ function updateAgent(a, dt, I) {
     const h = B.holder;
     if (a.state === 'free' && a.def && h && Math.hypot(h.pos.x - a.pos.x, h.pos.z - a.pos.z) < 3.4) startBlock(a); else a.jumpWind = 0.11;
   }
-  if (a.jumpWind > 0) { a.jumpWind -= dt; if (a.jumpWind <= 0) { a.vy = 4.2; a.grounded = false; } }
+  if (a.jumpWind > 0) { a.jumpWind -= dt; if (a.jumpWind <= 0) { a.vy = 4.2 * (a.jumpM ?? 1); a.grounded = false; } }
   if (a.state === 'charge') {
     a.charge += a.chargeDir * CHARGE_SPEED * dt;
     if (a.charge >= 1) { a.charge = 1; a.chargeDir = -1; } if (a.charge <= 0) { a.charge = 0; a.chargeDir = 1; }
@@ -1037,7 +1033,7 @@ function updateAgent(a, dt, I) {
   }
   if (a.state === 'shoot') {
     a.shootT += dt;
-    if (!a.launched && a.shootT >= T_LAUNCH) { a.launched = true; if (a.grounded && !a.ftShot) { a.vy = JUMP_SHOT; a.grounded = false; } }
+    if (!a.launched && a.shootT >= T_LAUNCH) { a.launched = true; if (a.grounded && !a.ftShot) { a.vy = JUMP_SHOT * (a.jumpM ?? 1); a.grounded = false; } }
     if (a.shootT >= T_END) a.state = B.holder === a ? 'dribble' : 'free';
   }
   if (!a.grounded) {
@@ -1362,10 +1358,11 @@ function releaseBall(a) {
   const H = a.aimHoop, target = V3(0, RIM_Y, H.hz), dir = V3(target.x - BP.x, 0, target.z - BP.z);
   const dist = dir.length(); dir.normalize();
   const v = solveShot(BP, target, dir, dist);
-  const ch = a.charge, q = Math.abs(ch - PERFECT), perfect = q <= 0.035;
+  const three0 = Math.hypot(a.pos.x, H.hz - a.pos.z) > 7.24 || Math.abs(a.pos.x) >= 6.7, rs = releaseSkill(a.info, three0, dist);   // el rating de la zona agranda o achica la ventana del tiro perfecto
+  const ch = a.charge, q = Math.abs(ch - PERFECT), perfect = q <= (a.ftShot ? 0.035 : rs.window);
   if (!perfect) v.multiplyScalar(1 + (ch - PERFECT) * 0.28);
   const human = isHum(a), cst = human && !a.ftShot ? contestOf(a) * (a.tired ? 1.3 : 1) : 0;   // al humano lo marcan de verdad; el bot ya lo tiene en su probabilidad
-  v.applyAxisAngle(UP, gauss() * (perfect ? 0.0012 : 0.004 + q * 0.1) + gauss() * dist * 0.0002 + gauss() * cst * 0.012);
+  v.applyAxisAngle(UP, gauss() * (perfect ? 0.0012 : 0.004 + q * 0.1) * (a.ftShot ? 1 : rs.noise) + gauss() * dist * 0.0002 * (a.ftShot ? 1 : rs.noise) + gauss() * cst * 0.012);
   if (cst > 0) v.multiplyScalar(1 + gauss() * cst * 0.03);
   if (a.ftShot) v.applyAxisAngle(UP, gauss() * (0.9 - clamp((a.info.ft ?? 70) / 100, 0, 0.9)) * 0.006);   // en los libres el rating de tiro libre pesa un poco
   BV.copy(v); BW.copy(dir.cross(UP).multiplyScalar(18));
@@ -1482,7 +1479,7 @@ function pickups() {                   // quién agarra la pelota (rebotes, pase
         const p = isHum(a) ? 0.55 : prof(a).intercept * (a.info.defense / 75);
         if (Math.random() < clamp(p, 0, 0.8)) { sc = 5; say('¡Pase interceptado!'); } else continue;
       } else continue;
-    } else sc = 1 / (d + 0.15) + Math.random() * 0.6 + (a.info.rebound - 70) * 0.01;
+    } else sc = 1 / (d + 0.15) + Math.random() * 0.6 + (a.info.detailed ? reboundScore(a.info, a.team === B.possTeam, a.scale) : (a.info.rebound - 70) * 0.01);
     if (sc > bs) { bs = sc; best = a; }
   }
   if (best) giveBall(best, B.mode === 'pass' ? (best === B.target ? 'pass' : 'steal') : 'rebound');
@@ -2209,7 +2206,7 @@ function stepGame(dt) {
   if (mode === 'match') { checkDunkBlocks(); separate(); }
   for (const a of act) pose(a, dt);
   ballLogic(dt);
-  for (const t of [0, 1]) for (const b of T[t].bench) b.rest = Math.min(1, (b.rest ?? 1) + dt * 0.03);       // los suplentes descansan
+  for (const t of [0, 1]) for (const b of T[t].bench) b.rest = Math.min(1, (b.rest ?? 1) + dt * 0.03 * recoverMul(b));       // los suplentes descansan
   if (dead) updateDead(dt); else if (mode === 'match') { tickGame(dt); checkPlayerOut(); }
 }
 function frame() {

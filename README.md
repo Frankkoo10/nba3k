@@ -1,4 +1,4 @@
-# Basket 3D — v30
+# Basket 3D — v33
 
 Basket en tercera persona con Three.js: cancha NBA a escala real, física realista, menú con los 30 equipos (con escudos), marcador estilo NBA TV, tribuna estilo Chase Center (Warriors), árbitro y un rival (bot) quieto.
 
@@ -297,3 +297,49 @@ No hay que correr nada nuevo en Supabase (sigue siendo el `004_salas_online.sql`
 ### v30.1 — floater corregido + dribleos con lujo
 - **Floater:** se quedaba corto porque el cálculo del tiro suponía más efecto de rotación del que lleva la pelota. Ahora se resuelve con el mismo efecto con el que sale (en pruebas pasó de entrar 45 de 200 a 200 de 200). Las demás bandejas no cambian.
 - **Dribleos con lujo:** mantené **L2** (o **Z**) y apretá el botón de **cruce/dribleo** (o el flick del stick derecho): *por abajo de las piernas*, *por la espalda*, *stepback* (te despegás hacia atrás y el próximo tiro queda mucho menos marcado) y *giro* (vuelta completa protegiendo la pelota). Gastan más energía que un cruce normal y dejan sentado al defensor más seguido (menos el stepback). Los bots con buen manejo también los usan de vez en cuando. Código: `MOVES` y `startCrossover` en `main.js`.
+
+
+## Novedades v32 — los jugadores juegan según sus estadísticas
+Todas las curvas están en **`skill.js`** (un solo archivo, para ajustar a gusto). Referencia: 70 = normal, 99 = élite, 40 = muy flojo. Usa los atributos de la base (`three_point`, `mid_range`, `stamina`, `speed`, `vertical`, etc.); si a un jugador le faltan, se estiman como antes.
+
+**Tiro (volumen y rango, no solo %)**
+- Cada bot decide si tira según el rating **de la zona**: triple, media distancia o cerca del aro. Un Curry (triple 99) se anima con menos espacio y **desde mucho más lejos** (10 m+); un 85 como Maxey tira de tres pero no desde el logo; un pívot con triple 40 casi no tira de afuera salvo que se acabe el reloj.
+- Efectividad: sube suave hacia 99 y cae más rápido hacia abajo (triple 99 ≈ 51 %, 70 ≈ 40 %, 40 ≈ 21 % en tiros abiertos).
+- Las estrellas (ovr alto) tiran y reciben la pelota un poco más.
+- **Si jugás vos:** el rating de la zona agranda o achica la ventana del tiro perfecto y el error del tiro (con Curry el "verde" es más ancho que con un pívot).
+- Bandejas: pesan `driving_layup` y la `strength` contra la marca. Mates: hace falta `driving_dunk` + `vertical` suficientes; si no, hace bandeja (un base con mate 40 ya no machaca).
+
+**Físico**
+- **Resistencia (`stamina`)**: se cansa más lento y recupera más rápido (99 → ×0.65 de gasto y ×1.35 de recuperación; 40 → ×1.36 y ×0.64). Incluye cruces, dribleo y banco. Un jugador con stamina 90 aguanta sprints mientras un 55 ya va lento.
+- **Velocidad** (más rango: 40 → ×0.80, 99 → ×1.10) y **aceleración / cambios de dirección**.
+- **Salto (`vertical`)**: altura del salto de tiro, tapón y rebote; también pesa contra el tapón a un mate.
+
+**Defensa y rebote**
+- Intentan más robos/tapones los que tienen más `steal` / `block`; el robo depende bastante más de `steal` vs `ball_handle` (y velocidad). El buen defensor perimetral marca más pegado.
+- Rebotes: `off_rebound` / `def_rebound` (según si es de tu equipo el tiro) + fuerza + salto + altura.
+
+**Archivos:** `skill.js` (nuevo), `ai.js`, `main.js` (`setInfo`, `updateAgent`, `releaseBall`, `startDunk`, `tryDunk`, `resolveSteal`, rebotes).
+**Ojo:** no pude abrir el juego en el navegador; verifiqué la sintaxis y las curvas con un script de prueba (tiros y físico por jugador). Si ves que algo se pasa de fuerte o flojo, tocá los números de `skill.js`.
+
+
+## Novedades v33 — jugadores que se parecen a los reales
+Cada jugador toma del dato de la base su **altura, peso, piel, pelo, barba y accesorios**. Todo lo visual está en `looks.js` (tabla de jugadores conocidos + reglas de tamaño) y en `rig.js` (el modelo).
+
+**Tamaño y cuerpo**
+- **Altura real:** antes el tamaño se achataba entre 0,93 y 1,08; ahora va de 0,88 a 1,16 (el modelo base mide 1,98 m). Wembanyama (7'4") sale ×1,13; un base de 5'3" sale ×0,88. Se nota en cancha y en el alcance real al aro, tapones y rebotes.
+- **Contextura:** sale del IMC (peso y altura) y un poco de la `strength`. Wembanyama queda flaco y largo; Jokic o Embiid, corpulentos. Rango ampliado (0,88–1,16).
+
+**Piel, pelo y accesorios** (`rig.js`)
+- Peinados nuevos: **trenzas, rodete, cola / pelo largo atado y rizos largos** (se suman a pelado, corto, rapado, afro y high top).
+- **Color de pelo** (negro, castaño, rubio teñido…), **barba** (corta o tupida), **vincha** (se ajusta al tamaño del pelo; sobre un pelado queda sobre el cráneo) y **manga de compresión** en uno o ambos brazos.
+
+**De dónde sale el aspecto de cada uno** (prioridad)
+1. Columnas de la base (`supabase/005_aspecto.sql`): `hair_style`, `hair_color`, `beard`, `headband`, `arm_sleeve`, `sleeve_color` y `skin_tone`.
+2. La tabla de `looks.js` con ~80 jugadores conocidos (por nombre, sin importar tildes ni mayúsculas): LeBron (piel oscura, vincha negra), Caruso (pelado, vincha blanca), LaMelo (rubio teñido, rizos largos), Jokic (pelo largo atado, barba), Wembanyama, Curry, Giannis, etc.
+3. Si no está, se estima desde el nombre (como antes); si es de piel clara, el pelo sale castaño en vez de negro.
+- Para los conocidos, `skin_tone = 2` (el valor por defecto de la tabla) se ignora y manda la tabla. Si corrés el 005 queda todo cargado en la base y podés editarlo ahí.
+
+**Cómo corregir o agregar un jugador:** en el SQL Editor, por ejemplo `update public.players set hair_style = 5, hair_color = '#15120f', headband = '#ffffff' where name ilike 'Nombre Apellido';`. También podés agregarlo en `looks.js` (`KNOWN_RAW`).
+
+**Archivos:** `looks.js` (nuevo), `supabase/005_aspecto.sql` (nuevo), `rig.js`, `rig-geo.js`, `roster.js`, `main.js`, `stage.js`.
+**Ojo:** no pude verlos en un navegador (verifiqué que el modelo se arme sin errores con todos los peinados y que la vincha quede ajustada a cada peinado). Los rasgos de la tabla son de memoria y pueden estar desactualizados (pelo, barba): decime cuáles cambiar.

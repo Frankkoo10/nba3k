@@ -1,6 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
 import { makeRig, mkJ, applyPose } from './rig.js';
 import { SKIN_TONES } from './roster.js';
+import { buildFor, scaleFor } from './looks.js';
 import { nickname } from './kits.js';
 import { fitCfg } from './stagecam.js';
 
@@ -13,21 +14,15 @@ import { fitCfg } from './stagecam.js';
    ========================================================================== */
 
 /* ---- contextura y camiseta: igual que en main.js ---- */
-const BUILD = { PG: 0.94, SG: 0.98, SF: 1.0, PF: 1.06, C: 1.11 };
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-function buildFor(p) {
-  if (!p.weightLb) return BUILD[p.pos] ?? 1;
-  const kg = p.weightLb * 0.4536, m = p.height / 100, bmi = kg / (m * m);
-  return clamp(1 + (bmi - 24.5) * 0.04, 0.9, 1.14);
-}
 const inkOf = k => ({ wordFill: k.wordFill, wordStroke: k.wordStroke, numFill: k.numFill, numStroke: k.numStroke, nameFill: k.nameFill, nameStroke: k.nameStroke });
 
 function dress(R, it) {
   const p = it.player, k = it.kit;
-  R.setSkin(SKIN_TONES[p.skin] ?? 0xb97a50); R.setLook(p.name || p.id); R.setBuild(buildFor(p)); R.setUniformInfo?.(p);
+  R.setSkin(SKIN_TONES[p.skin] ?? 0xb97a50); R.setLook(p.name || p.id, p.look); R.setBuild(buildFor(p)); R.setUniformInfo?.(p);
   R.setUniformStyle?.({ jersey: k.jersey, shorts: k.shorts, accent: k.accent, trim: k.trim, details: k.details, word: nickname(it.team), ink: inkOf(k), decals: true });
   R.shoeM.color.set(k.shoes);
-  R.root.scale.setScalar(clamp((p.height || 198) / 198, 0.93, 1.08));
+  R.root.scale.setScalar(scaleFor(p));
 }
 
 /** Pose de "foto de equipo": parado, hombros relajados y brazos apenas separados del cuerpo. */
