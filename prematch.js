@@ -407,6 +407,20 @@ function glowSync() {
   try { stage?.setGlow?.(cur, lineup ? S.selStarter : -1); } catch { /* sin 3D */ }
 }
 /** Un joystick apretó un botón: si estamos en el paso Jugadores, ese joystick entra al partido en la primera casilla libre (J2, J3 o J4). */
+/** Con 2 o más joysticks conectados entran solos al abrir el menú (J1 = Local, J2 = Visitante, J3 y J4 según su casilla): cada uno maneja lo suyo.
+    Solo pasa si todavía no hay ningún joystick anotado; si después sacás a alguien con la ✕ no vuelve solo. Online no aplica. */
+function autoEnrollPads() {
+  if (S.online || S.slots.some(s => s.on && s.dev === 'pad')) return 0;
+  const pads = (navigator.getGamepads ? [...navigator.getGamepads()] : []).filter(p => p && p.connected);
+  if (pads.length < 2) return 0;
+  let n = 0;
+  for (const p of pads.slice(0, 4)) {
+    const first = S.slots[0], sl = (first.on && first.dev === 'kb' && first.auto) ? first : S.slots.find(x => !x.on);
+    if (!sl) break;
+    sl.on = true; sl.dev = 'pad'; sl.pad = p.index; sl.auto = false; n++;
+  }
+  pruneSlots(); return n;
+}
 export function onJoin(padIndex) {
   if (!open_ || S.step !== 0 || S.picker || S.card || S.leaveAsk) return;
   pruneSlots();
@@ -575,7 +589,7 @@ function renderPad(noSlots) {
   const pads = (navigator.getGamepads ? [...navigator.getGamepads()] : []).filter(p => p && p.connected);
   const extra = S.slots.filter(s => s.on && s.dev === 'pad').length;
   el.innerHTML = `${PAD_ICON}<span><b id="pmMode">${modeText()}</b><br>${pads.length
-    ? `Joysticks conectados: ${pads.length}. ${extra ? '' : 'Apretá un botón del joystick para jugar con él (toma el lugar de J1); para jugar de a 2, 3 o 4 apretá un botón en cada uno.'}`
+    ? `Joysticks conectados: ${pads.length}. ${extra ? (pads.length > extra ? `Hay ${pads.length} conectados y ${extra} anotado${extra > 1 ? 's' : ''}: apretá un botón en el que falta para sumarlo.` : '') : 'Apretá un botón del joystick para jugar con él (toma el lugar de J1); para jugar de a 2, 3 o 4 apretá un botón en cada uno.'}`
     : 'No hay joysticks conectados: por ahora se juega con teclado y mouse. Para usar un joystick, conectalo (USB o Bluetooth) y apretale un botón; cada jugador suma el suyo.'}</span>`;
 }
 
@@ -830,8 +844,10 @@ export function openWizard({ step = 0, banner = '', online = null } = {}) {
   if (online) beginOnline(online); else if (S.online) endOnline();
   open_ = true; S.leaveAsk = false; hoverI = -1; S.step = Math.max(S.online ? 1 : 0, Math.min(LAST, step)); S.banner = banner; S.selStarter = null; padZone = 0; padI[0] = padI[1] = 0; padRow = 0; S.focus = 'A';
   root.hidden = false;
+  const auto = online ? 0 : autoEnrollPads();
   if (!S.rosA) loadSide('A'); if (!S.rosB) loadSide('B');
   render();
+  if (auto > 1) toast(`${auto} joysticks detectados: J1 es el Local y J2 el Visitante. Cada uno maneja solo lo suyo.`);
 }
 export function closeWizard() { open_ = false; stage?.stop?.(); if (root) root.hidden = true; if (S.online) endOnline(); }
 function close() { closeWizard(); }

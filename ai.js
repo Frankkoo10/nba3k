@@ -218,8 +218,8 @@ function defend(G, a, dt, I) {
       ai.stealT = 0.6 + rnd() * 0.9; if (rnd() < prof.stealAtt) G.startSteal(a);
     }
     if (h.state === 'charge' || h.state === 'shoot' || h.state === 'dunk') {          // taponar: se decide una vez por tiro, con reacción
-      if (ai.seenShot !== h.shotId) { ai.seenShot = h.shotId; ai.blockPlan = dist < 2.1 && rnd() < prof.blockAtt; ai.blockDelay = 0.03 + (1 - prof.react) * 0.14 + rnd() * 0.06; }
-      if (ai.blockPlan && a.grounded && !a.act && a.stunT <= 0 && h.state === 'shoot' && h.shootT >= ai.blockDelay) { ai.blockPlan = false; G.startBlock(a); }
+      if (ai.seenShot !== h.shotId) { ai.seenShot = h.shotId; ai.blockPlan = dist < 2.1 && rnd() < prof.blockAtt * (h.state === 'dunk' ? 0.7 : 1); ai.blockDelay = 0.03 + (1 - prof.react) * 0.14 + rnd() * 0.06; }
+      if (ai.blockPlan && a.grounded && !a.act && a.stunT <= 0 && (h.state === 'shoot' ? h.shootT >= ai.blockDelay : h.state === 'dunk' && h.D.t >= 0.06 + ai.blockDelay)) { ai.blockPlan = false; G.startBlock(a); }
     }
     return;
   }
@@ -241,7 +241,7 @@ function defend(G, a, dt, I) {
   // si el que tiene la pelota va a tirar o a entrar, el ayudante también salta a taponar
   if (h && h.team !== a.team && ctx.helper[a.team] === a && ai.helping && (h.state === 'shoot' || h.state === 'dunk')) {
     if (ai.seenShot !== h.shotId) { ai.seenShot = h.shotId; ai.blockPlan = hyp(h.pos.x - a.pos.x, h.pos.z - a.pos.z) < 2.4 && rnd() < prof.blockAtt * 0.8; ai.blockDelay = 0.05 + (1 - prof.react) * 0.14 + rnd() * 0.06; }
-    if (ai.blockPlan && a.grounded && !a.act && h.shootT >= ai.blockDelay && h.state === 'shoot') { ai.blockPlan = false; G.startBlock(a); }
+    if (ai.blockPlan && a.grounded && !a.act && (h.state === 'shoot' ? h.shootT >= ai.blockDelay : h.state === 'dunk' && h.D.t >= 0.06 + ai.blockDelay)) { ai.blockPlan = false; G.startBlock(a); }
   }
 }
 

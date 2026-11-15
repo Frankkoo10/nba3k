@@ -1,4 +1,4 @@
-# Basket 3D — v28
+# Basket 3D — v30
 
 Basket en tercera persona con Three.js: cancha NBA a escala real, física realista, menú con los 30 equipos (con escudos), marcador estilo NBA TV, tribuna estilo Chase Center (Warriors), árbitro y un rival (bot) quieto.
 
@@ -262,3 +262,33 @@ No hay que correr nada nuevo en Supabase (sigue siendo el `004_salas_online.sql`
 - "Nivel de los bots" no aparece online: los dos equipos tienen un humano y no cambia nada.
 
 **Archivos nuevos/tocados:** `net.js` (conexión directa + respaldo), `netsync.js` (buffer de snapshots e interpolación), `online.js` (arranque/fin/abandono del partido), `main.js` (sección "Partido online": snapshots del anfitrión, visor del invitado, controles por red), `prematch.js` (`hideForMatch`, `resumeOnline`, estilo por equipo).
+
+
+## Novedades v29 — cada joystick maneja solo lo suyo
+**Qué pasaba:** con 2 joysticks en la misma PC, si el segundo no se había anotado en el menú, el juego usaba "el joystick que toques" y el control **saltaba de uno a otro en cada cuadro** (se trababa y los dos movían al mismo jugador).
+
+**Qué cambió**
+- **Joysticks que entran solos:** al abrir *Partido casual* con 2 o más joysticks ya detectados, entran automáticamente (J1 = Local, J2 = Visitante, J3 y J4 según su casilla). Se pueden sacar con la ✕ o ○ / B. Si un joystick se conectó después, se suma apretándole un botón en el paso *Jugadores* (ahora entran todos los que aprieten en el mismo instante) y el menú avisa "hay 2 conectados y 1 anotado".
+- **Cada mando, su jugador:** un solo jugador con su joystick ya no es afectado por los otros mandos conectados. Con varios jugadores cada joystick maneja solo al suyo (movimiento, tiro, pase, robo, cambio, vibración), y el teclado solo mueve a quien lo eligió.
+- **Mando activo estable** (`gamepad.js`): en menús y pausa, el mando que estás usando ya no te lo roba otro que también está apretando botones.
+
+**Archivos tocados:** `gamepad.js` (mando activo estable, `joinPollAll`), `main.js` (`inputOf`, `sep` en el bucle), `prematch.js` (`autoEnrollPads`, aviso de joysticks sin anotar).
+
+**Probar:** conectá 2 mandos, apretá un botón en cada uno, abrí *Partido casual*: deberías ver J1 (Local) y J2 (Visitante) ya anotados. Jugá 1 vs 1: cada uno mueve, tira, pasa y roba solo con el suyo.
+
+
+## Novedades v30 — más animaciones: mates, bandejas, tapones y pases con lujo
+**Botón de lujo (modificador):** mantené **L2 / LT** en el joystick (o **Z** en el teclado; se reasigna en *Controles*) y apretá la acción. Sin apretarlo, las variantes también salen de vez en cuando (más seguido en los bots con buen rating).
+
+**Mates nuevos** (corriendo hacia el aro + saltar, con lujo): *de espaldas* · *por debajo de la pierna* (la pelota pasa de una mano a la otra bajo el muslo) · *molino* · *360* · combos *pierna + de espaldas* y *molino + 360*. El mensaje en pantalla dice cuál fue.
+
+**Bandejas nuevas** (cerca del aro, más lento): *a tablero* (pega en el vidrio y entra) · *finger roll* (gira sobre el aro y entra o sale) · *con la palma arriba* (scoop) · *reversa* · *euro step* · *floater* (arco alto). La pelota de tablero y de giro se elige con un simulador (`shotsim.js`) que repite la física del juego, así que el rebote es real y no un truco.
+
+**Tapones:** 4 estilos — dos manos, una mano, de persecución (cuando el tirador te da la espalda) y manotazo hacia abajo (*spike*). **Ahora se puede taponar un mate o una bandeja en el aire** (saltá con *taponar* cuando el rival ya despegó). Resultados posibles: tapón limpio, tapón **con falta** (tiros libres), falta sin tapón (si el mate entra: y-uno) o roce sin consecuencias. Depende del rating de *tapones* contra el de mate/bandeja y de la altura. Los bots también lo intentan.
+
+**Pases con lujo** (L2 + pasar): *por la espalda* · *sin mirar* · *envolviendo* · *por arriba de la cabeza* · *de pique* (la pelota pica una vez y llega a la cintura). Salen un instante después de armar el movimiento y tienen un poco más de riesgo de error.
+
+**Online:** el invitado ve todas las animaciones (viajan como articulaciones) y su botón de lujo se manda al anfitrión.
+
+**Archivos:** `main.js` (catálogos `DUNKS` / `LAYS`, `startDunk`, `updateDunk`, `checkDunkBlocks`, `launchPass`, `poseDunkX`, `poseLayX`, `poseFlashPass`, `blockPose`), `shotsim.js` (nuevo), `ai.js`, `gamepad.js`, `keyboard.js`, `controls.js`.
+**Ojo:** no pude abrir el juego en un navegador mientras lo armaba (sin internet para Three.js); verifiqué la sintaxis, la física de pelota con simulaciones y las posiciones de brazos con cinemática. Si alguna pose se ve rara, avisame cuál y la ajusto.

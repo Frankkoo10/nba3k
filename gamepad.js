@@ -10,16 +10,18 @@ export const ACTIONS = [
   { id: 'switch',  label: 'Cambiar de jugador',                                      def: 4 },
   { id: 'camera',  label: 'Cambiar cámara',                                          def: 8 },
   { id: 'menu',    label: 'Pausa',                                                    def: 9 },
+  { id: 'mod',     label: 'Lujo (mantener): mates, bandejas y pases especiales',      def: 6 },
 ];
 export const DEFAULTS = Object.fromEntries(ACTIONS.map(a => [a.id, a.def]));
 const PS = ['✕', '○', '□', '△', 'L1', 'R1', 'L2', 'R2', 'Share', 'Options', 'L3', 'R3', '↑', '↓', '←', '→', 'PS'];
 const XB = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS', 'RS', '↑', '↓', '←', '→', 'Guide'];
 
 export const state = { connected: false, id: '', index: -1, style: 'both', lx: 0, ly: 0, rx: 0, ry: 0, mag: 0, rmag: 0, flick: false, down: {}, pressed: {}, released: {}, amt: { sprint: 0 }, raw: [], nav: {}, standard: true };
-let S = { pad: { ...DEFAULTS }, dead: 0.22 }, save = () => {}, active = -1, prevRaw = [], listenCb = null, armed = false, flickArmed = true;
+let S = { pad: { ...DEFAULTS }, dead: 0.22 }, save = () => {}, active = -1, lastIdx = -1, prevRaw = [], listenCb = null, armed = false, flickArmed = true;
 const hold = { up: 0, down: 0, left: 0, right: 0 }, listeners = [];
 
-export function init(settings, saveFn) { S = settings; save = saveFn || save; S.pad = { ...DEFAULTS, ...(S.pad || {}) }; if (typeof S.dead !== 'number') S.dead = 0.22; }
+export function init(settings, saveFn) { S = settings; save = saveFn || save; if (S.pad && S.pad.mod === undefined && Object.keys(S.pad).some(k => S.pad[k] === 6)) S.pad = { ...S.pad, mod: -1 };   // si ya usabas L2 para otra cosa, el botón de lujo queda sin asignar
+  S.pad = { ...DEFAULTS, ...(S.pad || {}) }; if (typeof S.dead !== 'number') S.dead = 0.22; }
 export const bindings = () => S.pad;
 export function label(i) {
   if (i == null || i < 0) return '—';
@@ -56,10 +58,12 @@ function radial(x, y, dz) {                                         // zona muer
 }
 export function update(dt) {
   const pads = (navigator.getGamepads ? [...navigator.getGamepads()] : []).filter(Boolean);
+  const busy = p => p.buttons.some(b => b.pressed) || p.axes.some(v => Math.abs(v) > 0.6);
   let gp = pads.find(p => p.index === active && p.connected);
-  for (const p of pads) if (p.connected && (p.buttons.some(b => b.pressed) || p.axes.some(v => Math.abs(v) > 0.6))) { gp = p; active = p.index; break; }   // el mando que tocás es el que manda
+  if (!gp || !busy(gp)) for (const p of pads) if (p.connected && busy(p)) { gp = p; active = p.index; break; }   // el mando que tocás es el que manda, pero NO se lo roban mientras lo estás usando (con 2 mandos antes saltaba de uno a otro cada cuadro)
   gp ||= pads.find(p => p.connected);
-  if (!gp) { state.connected = false; state.id = ''; clear(); prevRaw = []; return state; }
+  if (!gp) { state.connected = false; state.id = ''; clear(); prevRaw = []; lastIdx = -1; return state; }
+  if (gp.index !== lastIdx) { prevRaw = []; lastIdx = gp.index; }     // cambió el mando activo: los "apretó / soltó" se calculan desde cero (no mezclar botones de dos mandos)
   state.connected = true; state.id = gp.id; state.index = gp.index; state.standard = gp.mapping === 'standard';
   state.style = /054c|playstation|dualshock|dualsense|wireless controller/i.test(gp.id) ? 'ps' : /xbox|045e|xinput|057e|pro controller/i.test(gp.id) ? 'xbox' : 'both';
   const raw = gp.buttons.map(b => !!(b.pressed || b.value > 0.5)), ax = i => gp.axes[i] || 0;
@@ -120,6 +124,16 @@ export function joinPoll() {
     R.join = raw;
   }
   return found;
+}
+/* igual que joinPoll pero devuelve TODOS los joysticks que acaban de apretar un botón (si dos aprietan en el mismo cuadro, no se pierde ninguno) */
+export function joinPollAll() {
+  const out = [];
+  for (const p of rawPads()) {
+    const R = rdr(p.index), raw = p.buttons.map(b => !!(b.pressed || b.value > 0.5));
+    if (raw.some((v, k) => v && !R.join[k])) out.push(p.index);
+    R.join = raw;
+  }
+  return out;
 }
 export const resetJoin = () => { for (const p of rawPads()) rdr(p.index).join = p.buttons.map(b => !!(b.pressed || b.value > 0.5)); };
 

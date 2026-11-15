@@ -13,6 +13,7 @@ export const ACTIONS = [
   { id: 'steal',   label: 'Robar',                                     def: ['KeyF', null] },
   { id: 'switch',  label: 'Cambiar de jugador',                        def: ['KeyQ', null] },
   { id: 'camera',  label: 'Cambiar cámara',                            def: ['KeyC', null] },
+  { id: 'mod',     label: 'Lujo (mantener): mates, bandejas y pases especiales', def: ['KeyZ', null] },
   { id: 'reset',   label: 'Reiniciar jugada (solo entrenamiento)',     def: ['KeyR', null] },
 ];
 export const PAUSE_KEYS = ['Escape', 'KeyP'];                          // fijas: no se pueden reasignar
