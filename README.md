@@ -1,4 +1,4 @@
-# Basket 3D — v33
+# Basket 3D — v34
 
 Basket en tercera persona con Three.js: cancha NBA a escala real, física realista, menú con los 30 equipos (con escudos), marcador estilo NBA TV, tribuna estilo Chase Center (Warriors), árbitro y un rival (bot) quieto.
 
@@ -343,3 +343,33 @@ Cada jugador toma del dato de la base su **altura, peso, piel, pelo, barba y acc
 
 **Archivos:** `looks.js` (nuevo), `supabase/005_aspecto.sql` (nuevo), `rig.js`, `rig-geo.js`, `roster.js`, `main.js`, `stage.js`.
 **Ojo:** no pude verlos en un navegador (verifiqué que el modelo se arme sin errores con todos los peinados y que la vincha quede ajustada a cada peinado). Los rasgos de la tabla son de memoria y pueden estar desactualizados (pelo, barba): decime cuáles cambiar.
+
+
+## Novedades v34 — peinados con volumen, más jugadores, cámara TV y arreglos
+**Peinados (antes se veían todos pelados):** el rapado era una capa de 1–6 mm, casi invisible sobre piel oscura. Ahora el pelo tiene más volumen (corto y rapado más gruesos) y hay estilos nuevos: **9 corto-medio** (Luka, Klay, Herro, Reaves…) y **10 rizado medio** (con rulos de verdad: Murray, Haliburton, Maxey, Kyrie, Jarrett Allen…). Los rizos largos (8) también llevan rulos; las trenzas (5) son más gruesas (Shai, Siakam). `hair_style` va de 0 a 10; corré de nuevo `supabase/005_aspecto.sql` (amplía el rango).
+
+**Más jugadores:** ~110 en la tabla de `looks.js` (sumé jóvenes y rotación: LaVine, Smart, Jarrett Allen, Jaren Jackson Jr., CJ McCollum, Ingram, Strus, Duncan Robinson, Horford, etc.). Para agregar o cambiar uno: `KNOWN_RAW` en `looks.js` o un `update` en la base.
+
+**Entrenamiento — elegir jugador:** no se podía cambiar porque el id del jugador en la base es un número y el botón lo devolvía como texto, así que siempre caía en el primer titular. Arreglado en `trainsetup.js` y `main.js` (también el resaltado del elegido y las flechas ↑ ↓). Desde la pausa: *Cambiar cancha / jugador*.
+
+**Cámara de TV por defecto:** en el partido y en el entrenamiento. Si habías guardado otra cámara, vuelve a TV una vez (después se respeta lo que elijas).
+
+**Número de la camiseta que se borraba:** el modelo se ensancha con la contextura (hasta ×1,16), pero el número, las franjas de la camiseta y los vivos del short se quedaban con el ancho original, y en los jugadores corpulentos quedaban **adentro de la tela**. Ahora escalan juntos (`rig.js`, `setBuild`) y el número queda un poco más separado de la tela.
+
+**Archivos tocados:** `rig-geo.js`, `rig.js`, `looks.js`, `trainsetup.js`, `main.js`, `prematch.js`, `supabase/005_aspecto.sql`.
+**Ojo:** no pude abrir el juego en un navegador; verifiqué que el modelo se arme con todos los estilos y que camiseta y número escalen igual. Si algún peinado se ve raro, decime cuál y lo ajusto.
+
+
+## Novedades v35 — más jugadores con rasgos propios y joystick con inercia
+**Jugadores y detalles (`looks.js`, `rig.js`, `supabase/006_accesorios.sql`)**
+- **Jaylen Brown: manga blanca en el antebrazo izquierdo**, como pediste. Para cualquier jugador se puede indicar manga (`arm_sleeve`), y ahora también **muñequera** y **rodillera** (izq / der / ambas, con color).
+- Rasgos agregados o corregidos: **LeBron** sin vincha (hace una década que no la usa) y con manga negra en el brazo derecho · **Curry** con manga en el izquierdo · **vinchas** en Jimmy Butler, Anthony Davis, Shai, Siakam y Jalen Suggs · **rodillera** izquierda en Embiid.
+- **~50 jugadores nuevos** en la tabla (ahora ~160): DeRozan, Derrick White, Jalen Green, Amen y Ausar Thompson, Castle, Bane, Pritchard, Hauser, Porter Jr., Kuminga, Scoot Henderson, Clingan, Quickley, RJ Barrett, Sarr, Risacher, Dylan Harper, VJ Edgecombe, Knueppel, etc.
+- Para cambiar a uno: `KNOWN_RAW` en `looks.js` (por ejemplo `X(L(3, 2, K, 1), { wrist: 'R', wristColor: W })`) o un `update` en la base (corré el 006 una vez).
+
+**Joystick (`gamepad.js` → `STICK`, `main.js` → `steerStick`)**
+- El stick ya no apunta el rumbo de golpe como un mouse: las direcciones se **pegan a 16 rumbos** (caminar derecho no cuesta), la inclinación tiene una **curva** (poco = caminar fino) y el jugador **gira con inercia**: parado cambia casi al instante, pero a toda velocidad hace una curva (180° a sprint ≈ 0,6 s). Los de mejor aceleración / cambio de dirección doblan más cerrado.
+- Todo se ajusta en un solo bloque, `STICK` (`gamepad.js`): `turnRun` más alto = giros más rápidos, `curve` 1 = lineal.
+**Ojo:** no pude abrirlo en un navegador; verifiqué la sintaxis, la tabla de looks y la curva del stick con scripts. Los rasgos son de memoria + búsqueda y pueden estar desactualizados.
+
+**Joystick en los menús (v35, `gamepad.js` → `menuNav`)**: antes el cursor saltaba al elemento más cercano en cualquier dirección (como un mouse). Ahora es por **filas**: ← → solo se mueven dentro de la fila, ↑ ↓ pasan a la fila de arriba o abajo y caen en el elemento más alineado, sin saltos en diagonal. Con el stick cuenta solo el eje dominante (empujar medio en diagonal ya no mueve en dos sentidos). Los pasos del menú previo al partido ya tenían su propia navegación y no cambian.

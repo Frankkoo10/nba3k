@@ -396,7 +396,7 @@ function setMode(m) {
   agents.forEach((a, i) => { a.active = tr ? i === 0 : true; a.R.root.visible = a.active; a.label.visible = !tr; });
   R3.root.visible = !tr;                               // sin árbitro en el entrenamiento
   $('modeLabel').textContent = tr ? 'ENTRENAMIENTO' : 'PARTIDO CASUAL';
-  camMode = tr ? 2 : 0; showCamName();
+  camMode = tr ? 1 : 0; showCamName();
 }
 function applyTrainingLook() {                         // remera blanca, short oscuro, zapatillas blancas
   const a = agents[0]; a.R.setUniformStyle?.({ jersey: '#ffffff', shorts: '#15181f', accent: '#ffffff', trim: '#ffffff', details: false, decals: false }); a.R.shoeM.color.set(0xffffff);
@@ -407,7 +407,7 @@ async function startTraining(cfg) {
   TS.close(); paused = true;
   const team = TEAMS.find(t => t.ab === cfg.team) || teamA;
   let ros; try { ros = await loadRoster(team); } catch { ros = fallbackRoster(team); }
-  const p = [...ros.starters, ...ros.bench].find(x => x.id === cfg.player) || ros.starters[0];
+  const p = [...ros.starters, ...ros.bench].find(x => String(x.id) === String(cfg.player)) || ros.starters[0];
   setMode('training'); setCourt(courtById(cfg.court));
   const a = agents[0];
   if (cfg.kit === 'team') {                              // con la camiseta de su equipo (nombre y número del jugador)
@@ -417,7 +417,7 @@ async function startTraining(cfg) {
   setInfo(a, { ...p }); a.stam = 1; a.tired = false;
   setupHumans(null, a); B.holder = null; B.mode = 'loose';
   Object.assign(stats, { shots: 0, makes: 0, streak: 0, best: 0, xp: 0 }); pendingShot = false; updateTrainHUD();
-  resetTraining(); PM.closeWizard(); paused = false;
+  resetTraining(); tvc.x = a.pos.x; tvc.z = a.pos.z; PM.closeWizard(); paused = false;
   say(KB.trainHint());
 }
 function openTrainSetup(fromPause = false) {            // desde el menú principal o desde la pausa (Cambiar cancha / jugador)
@@ -679,8 +679,24 @@ function updateControl(dt) {                            // a quién controlás: 
   }
   ctrl = humans[0].agent;
 }
-function humanIntent(a) {
-  const h = a.hum, inp = inputOf(h), I = a.intent, w = dead ? null : humanDir(h);
+/* Joystick (v35): el rumbo del stick no se aplica de golpe como un mouse. Se pega a 16 direcciones y el jugador GIRA hacia ahí con inercia:
+   parado o trotando gira casi al instante; a toda velocidad hace una curva (más o menos cerrada según su aceleración / cambio de dirección). */
+function steerStick(a, P, dt) {
+  const s = Pad.shapeStick(P.lx, P.ly), f = V3(-Math.sin(yaw), 0, -Math.cos(yaw)), r = V3(Math.cos(yaw), 0, -Math.sin(yaw));
+  const w = f.multiplyScalar(-s.y).addScaledVector(r, s.x); if (w.lengthSq() < 1e-6) return null;
+  const target = Math.atan2(w.x, w.z), sp = Math.hypot(a.vel.x, a.vel.z); a.stickMag = s.mag;
+  if (a.steer === undefined || sp < 1.2 || !a.grounded) a.steer = target;
+  else {
+    const rate = lerp(Pad.STICK.turnStand, Pad.STICK.turnRun, clamp(sp / 7, 0, 1)) * clamp(a.accMul ?? 1, 0.8, 1.25) ;
+    a.steer += clamp(wrap(target - a.steer), -rate * dt, rate * dt);
+  }
+  return V3(Math.sin(a.steer), 0, Math.cos(a.steer));
+}
+function humanIntent(a, dt = 1 / 60) {
+  const h = a.hum, inp = inputOf(h), I = a.intent;
+  let w = dead ? null : humanDir(h);
+  const kbMove = !!inp.kb && (KB.down('up') || KB.down('down') || KB.down('left') || KB.down('right'));
+  if (w && h.dev !== 'net' && inp.P && inp.P.mag > 0 && !kbMove) w = steerStick(a, inp.P, dt) || w;
   I.x = w ? w.x : 0; I.z = w ? w.z : 0; I.mag = w ? 1 : 0; I.face = null; I.move = false;
   const P = inp.P || NO_PAD, pd = dead ? {} : P.down, kd = dead || !inp.kb ? (() => false) : KB.down;
   const keySprint = kd('sprint'), padSprint = dead ? 0 : P.amt.sprint;           // gatillo analógico: apretado a medias = trote, a fondo = sprint
@@ -690,7 +706,7 @@ function humanIntent(a) {
   I.dribHold = kd('dribble') || !!pd.dribble;
   I.mod = kd('mod') || !!pd.mod;                                            // botón de lujo (L2): mates, bandejas y pases especiales
   const keyMove = kd('up') || kd('down') || kd('left') || kd('right');
-  I.analog = (!dead && P.mag > 0 && !keyMove && !I.sprint) ? P.mag : 1;   // inclinación del stick = velocidad
+  I.analog = (!dead && P.mag > 0 && !keyMove && !I.sprint) ? (h.dev !== 'net' && a.stickMag > 0 ? a.stickMag : P.mag) : 1;   // inclinación del stick = velocidad
   return I;
 }
 const NO_PAD = { mag: 0, lx: 0, ly: 0, down: {}, amt: { sprint: 0 } };
@@ -2197,7 +2213,7 @@ function stepGame(dt) {
   for (const a of act) {                                // quién "defiende": no tiene la pelota y el rival sí
     a.def = mode === 'match' && !!B.holder && B.holder.team !== a.team;
     let I;
-    if (isHum(a) && humanActive(a.hum)) I = humanIntent(a);
+    if (isHum(a) && humanActive(a.hum)) I = humanIntent(a, dt);
     else if (mode === 'training') { I = a.intent; I.x = I.z = I.mag = 0; I.sprint = I.jump = I.move = I.dribHold = false; I.sprintAmt = 0; I.face = null; }
     else { aiThink(G, a, dt, a.intent); I = a.intent; }
     if (I.move) startCrossover(a);

@@ -31,7 +31,7 @@ function loadTeam() {
   loadRoster(team).catch(() => fallbackRoster(team)).then(r => {
     if (req !== rReq) return;
     roster = r;
-    if (!allPlayers().some(p => p.id === cfg.player)) cfg.player = r.starters[0]?.id ?? null;     // el jugador guardado ya no está en este equipo
+    if (!allPlayers().some(p => String(p.id) === String(cfg.player))) cfg.player = r.starters[0]?.id ?? null;     // el jugador guardado ya no está en este equipo
     save(); renderPlayers();
   });
 }
@@ -58,7 +58,7 @@ function build() {
       if (c && !teamTouched && cfg.team !== c.team) { cfg.team = c.team; cfg.player = null; loadTeam(); renderTeams(); }      // por defecto entrenás con un jugador del equipo local de esa cancha
       renderCourts();
     } else if (b.dataset.do === 'team') { teamTouched = true; if (cfg.team !== v) { cfg.team = v; cfg.player = null; save(); renderTeams(); loadTeam(); } }
-    else if (b.dataset.do === 'player') { teamTouched = true; cfg.player = v; save(); renderPlayers(); }
+    else if (b.dataset.do === 'player') { teamTouched = true; cfg.player = allPlayers().find(p => String(p.id) === v)?.id ?? v; save(); renderPlayers(); }
     else if (b.dataset.do === 'kit') { cfg.kit = v; save(); renderKit(); }
   };
   $('tsBack').onclick = back; $('tsGo').onclick = go;
@@ -79,7 +79,7 @@ function renderPlayers() {
   const el = $('tsPlayers'); if (!el) return;
   const t = teamOf(cfg.team);
   if (!roster) { el.innerHTML = `<div class="ts-pl-h"><b>${esc(t.name)}</b></div><p class="ts-note">Cargando plantel…</p>`; return; }
-  const row = p => `<button type="button" class="ts-pl${p.id === cfg.player ? ' on' : ''}" data-do="player" data-v="${esc(p.id)}">
+  const row = p => `<button type="button" class="ts-pl${String(p.id) === String(cfg.player) ? ' on' : ''}" data-do="player" data-v="${esc(p.id)}">
     <em>${p.number}</em><b>${esc(p.name)}${p.generic ? ' *' : ''}</b><span>${p.pos}</span><span>${inchesToFtIn(p.heightIn)}</span><strong>${Math.round(p.ovr)}</strong></button>`;
   el.innerHTML = `<div class="ts-pl-h"><b>${esc(t.name)}</b><small>TITULARES</small></div>${roster.starters.map(row).join('')}<div class="ts-pl-h"><small>BANCO</small></div>${roster.bench.map(row).join('')}`;
   el.querySelector('.ts-pl.on')?.scrollIntoView?.({ block: 'nearest' });
@@ -101,7 +101,7 @@ function onKey(e) {
     const i = TEAMS.findIndex(t => t.ab === cfg.team), n = TEAMS[(i + (k === 'ArrowLeft' ? -1 : 1) + TEAMS.length) % TEAMS.length];
     teamTouched = true; cfg.team = n.ab; cfg.player = null; save(); renderTeams(); loadTeam(); e.preventDefault();
   } else if ((k === 'ArrowUp' || k === 'ArrowDown') && roster) {            // ↑ ↓ cambian de jugador
-    const l = allPlayers(), i = Math.max(0, l.findIndex(p => p.id === cfg.player));
+    const l = allPlayers(), i = Math.max(0, l.findIndex(p => String(p.id) === String(cfg.player)));
     cfg.player = l[(i + (k === 'ArrowUp' ? -1 : 1) + l.length) % l.length].id; teamTouched = true; save(); renderPlayers(); e.preventDefault();
   }
 }

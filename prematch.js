@@ -27,7 +27,7 @@ const STEPS = [
 ];
 const LAST = STEPS.length - 1;
 
-const DEFAULTS = { players: 1, a: 'LAL', b: 'BOS', kitA: 'icon', kitB: null, qLen: 180, shotClock: true, fatigue: true, autoSubs: true, cam: 0, camHeight: 0, court: 'home', style: { ...STYLE_DEFAULT } };
+const DEFAULTS = { players: 1, a: 'LAL', b: 'BOS', kitA: 'icon', kitB: null, qLen: 180, shotClock: true, fatigue: true, autoSubs: true, cam: 1, camHeight: 0, court: 'home', style: { ...STYLE_DEFAULT } };
 const saved = (() => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch { return {}; } })();
 const teamByAb = ab => TEAMS.find(t => t.ab === ab);
 
@@ -38,7 +38,7 @@ const S = {
   kitA: saved.kitA || DEFAULTS.kitA, kitB: saved.kitB || DEFAULTS.kitB,
   qLen: [60, 120, 180, 300, 480].includes(saved.qLen) ? saved.qLen : DEFAULTS.qLen,
   shotClock: saved.shotClock ?? DEFAULTS.shotClock, fatigue: saved.fatigue ?? DEFAULTS.fatigue, autoSubs: saved.autoSubs ?? DEFAULTS.autoSubs,
-  cam: [0, 1, 2].includes(saved.cam) ? saved.cam : DEFAULTS.cam,
+  cam: saved.camV === 2 && [0, 1, 2].includes(saved.cam) ? saved.cam : DEFAULTS.cam,     // camV: las partidas guardadas antes de que la TV fuera la predeterminada vuelven a TV una vez
   camHeight: [-2, -1, 0, 1, 2].includes(saved.camHeight) ? saved.camHeight : 0,
   court: ['home', 'away'].includes(saved.court) ? saved.court : DEFAULTS.court,       // en qué estadio se juega: el del local (izquierda) o el del visitante
   style: { ...DEFAULTS.style, ...(saved.style || {}) },
@@ -74,7 +74,7 @@ let hooks = {}, root = null, open_ = false;
 const persist = () => {
   if (S.online) return;                                   // en una sala no se pisan tus preferencias del casual
   try {
-    localStorage.setItem(SKEY, JSON.stringify({ a: S.teamA.ab, b: S.teamB.ab, kitA: S.kitA, kitB: S.kitB, qLen: S.qLen, shotClock: S.shotClock, fatigue: S.fatigue, autoSubs: S.autoSubs, cam: S.cam, camHeight: S.camHeight, court: S.court, style: S.style, slotTeams: S.slots.map(s => s.team) }));
+    localStorage.setItem(SKEY, JSON.stringify({ a: S.teamA.ab, b: S.teamB.ab, kitA: S.kitA, kitB: S.kitB, qLen: S.qLen, shotClock: S.shotClock, fatigue: S.fatigue, autoSubs: S.autoSubs, cam: S.cam, camV: 2, camHeight: S.camHeight, court: S.court, style: S.style, slotTeams: S.slots.map(s => s.team) }));
   } catch { /* sin storage */ }
 };
 

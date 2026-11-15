@@ -52,6 +52,18 @@ export function rumble(ms = 150, mag = 0.5, index = active) {
 function clear() {
   state.lx = state.ly = state.rx = state.ry = state.mag = state.rmag = 0; state.flick = false; state.down = {}; state.pressed = {}; state.released = {}; state.amt = { sprint: 0 }; state.nav = {};
 }
+/* Forma del stick izquierdo para MOVERSE (v35). Todo ajustable acá:
+   curve    : >1 = más fino cerca del centro (inclinar poco = caminar), 1 = lineal
+   snap     : las direcciones se "pegan" a 16 rumbos (cada 22,5°) para no caminar torcido; snapTol = qué tan cerca (rad) para pegarse
+   turnStand/turnRun : qué tan rápido gira el jugador hacia donde apuntás (rad/s) parado y a toda velocidad. Más bajo = más inercia. */
+export const STICK = { curve: 1.35, snap: Math.PI / 8, snapTol: 0.13, turnStand: 18, turnRun: 5.2 };
+export function shapeStick(lx, ly) {
+  const m = Math.hypot(lx, ly); if (m < 1e-4) return { x: 0, y: 0, mag: 0 };
+  let ang = Math.atan2(ly, lx); const q = Math.round(ang / STICK.snap) * STICK.snap;
+  if (Math.abs(ang - q) < STICK.snapTol) ang = q;
+  const mag = Math.pow(Math.min(1, m), STICK.curve);
+  return { x: Math.cos(ang) * mag, y: Math.sin(ang) * mag, mag };
+}
 function radial(x, y, dz) {                                         // zona muerta radial, la inclinación se reescala a 0..1
   const m = Math.hypot(x, y); if (m <= dz) return [0, 0, 0];
   const k = Math.min(1, (m - dz) / (1 - dz)); return [x / m * k, y / m * k, k];
@@ -82,7 +94,7 @@ export function update(dt) {
   state.down = down; state.pressed = pressed; state.released = released;
   const av = i => { const b = gp.buttons[i]; if (!b) return 0; const v = b.value > 0 || !b.pressed ? b.value : 1; return Math.max(0, Math.min(1, (v - 0.08) / 0.62)); };   // gatillos analógicos: 0 (suelto) … 1 (a fondo)
   state.amt = { sprint: av(S.pad.sprint) };
-  const dirs = { up: raw[12] || ay(gp, 1) < -0.6, down: raw[13] || ay(gp, 1) > 0.6, left: raw[14] || ay(gp, 0) < -0.6, right: raw[15] || ay(gp, 0) > 0.6 }, nav = {};
+  const sx = ay(gp, 0), sy = ay(gp, 1), horiz = Math.abs(sx) > Math.abs(sy), dirs = { up: raw[12] || (!horiz && sy < -0.6), down: raw[13] || (!horiz && sy > 0.6), left: raw[14] || (horiz && sx < -0.6), right: raw[15] || (horiz && sx > 0.6) }, nav = {};
   for (const k in dirs) {                                           // flechas de menú con repetición al mantener
     if (dirs[k]) { hold[k] += dt; nav[k] = hold[k] === dt || (hold[k] > 0.4 && Math.floor((hold[k] - 0.4) / 0.14) !== Math.floor((hold[k] - dt - 0.4) / 0.14)); } else hold[k] = 0;
   }
@@ -175,15 +187,19 @@ export function menuNav(P) {
   if (cur.tagName === 'INPUT' && cur.type === 'range' && (n.left || n.right)) {          // sliders: izquierda/derecha cambian el valor
     const st = +cur.step || 1, v = +cur.value + (n.right ? st : -st); cur.value = Math.min(+cur.max, Math.max(+cur.min, v)); cur.dispatchEvent(new Event('input', { bubbles: true })); return;
   }
-  const dir = n.up ? [0, -1] : n.down ? [0, 1] : n.left ? [-1, 0] : [1, 0];
-  const r0 = cur.getBoundingClientRect(), cx = r0.left + r0.width / 2, cy = r0.top + r0.height / 2;
-  let best = null, bs = 1e9;
-  for (const el of items) {
-    if (el === cur) continue;
-    const r = el.getBoundingClientRect(), dx = r.left + r.width / 2 - cx, dy = r.top + r.height / 2 - cy;
-    const along = dx * dir[0] + dy * dir[1], perp = Math.abs(dx * dir[1]) + Math.abs(dy * dir[0]);
-    if (along < 4) continue;
-    const s = along + perp * 2.2; if (s < bs) { bs = s; best = el; }
+  /* Navegación por filas (v35): ← → solo se mueven dentro de la misma fila (sin saltar a otra); ↑ ↓ pasan a la fila de arriba / abajo
+     y caen en el elemento que quede más alineado. Nada de saltos en diagonal ni a cualquier lado como un mouse. */
+  const rect = el => { const r = el.getBoundingClientRect(); return { el, cx: r.left + r.width / 2, cy: r.top + r.height / 2, tol: Math.max(10, r.height * 0.55) }; };
+  const cells = items.map(rect).sort((a, b) => a.cy - b.cy || a.cx - b.cx), rows = [];
+  for (const c of cells) { const row = rows.find(r => Math.abs(r.cy - c.cy) <= Math.max(r.tol, c.tol)); if (row) { row.items.push(c); row.cy = (row.cy * (row.items.length - 1) + c.cy) / row.items.length; } else rows.push({ cy: c.cy, tol: c.tol, items: [c] }); }
+  rows.sort((a, b) => a.cy - b.cy); rows.forEach(r => r.items.sort((a, b) => a.cx - b.cx));
+  const ri = rows.findIndex(r => r.items.some(c => c.el === cur)); if (ri < 0) return;
+  const me = rows[ri].items.find(c => c.el === cur);
+  if (n.left || n.right) {
+    const k = rows[ri].items.indexOf(me) + (n.right ? 1 : -1), t = rows[ri].items[k];
+    if (t) setFocus(t.el);
+  } else {
+    const row = rows[ri + (n.down ? 1 : -1)];
+    if (row) setFocus(row.items.reduce((b, c) => Math.abs(c.cx - me.cx) < Math.abs(b.cx - me.cx) ? c : b).el);
   }
-  if (best) setFocus(best);
 }

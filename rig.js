@@ -45,9 +45,29 @@ const hairGeo = style => (geo().hair[style] ??= mkGeo(hairMesh(style)));
 const capsCache = new Map();
 const caps = (r, l) => { const k = `${r}|${l}`; if (!capsCache.has(k)) capsCache.set(k, new THREE.CapsuleGeometry(r, l, 3, 8)); return capsCache.get(k); };
 const COMP_GEO = new THREE.CylinderGeometry(0.053, 0.041, 0.21, 16, 1, true);    // manga de compresión del antebrazo
+const WRIST_GEO = new THREE.CylinderGeometry(0.038, 0.034, 0.05, 14, 1, true);   // muñequera
+const KNEE_GEO = new THREE.CylinderGeometry(0.071, 0.066, 0.15, 16, 1, true);    // rodillera / manga de rodilla
 const BAND_GEO = new THREE.TorusGeometry(1, 0.17, 8, 40);                        // vincha (se escala al tamaño de la cabeza)
 /* Peinados largos o con volumen: se arman con la base de un peinado corto + piezas extra (rodete, cola, trenzas, rizos). */
-const HAIR_CAP = { 5: 2, 6: 1, 7: 1, 8: 9 };
+const HAIR_CAP = { 5: 1, 6: 9, 7: 9, 8: 20, 9: 9, 10: 11 };
+/* Rulos: muchas esferitas chicas pegadas al cuero cabelludo, fusionadas en una sola geometría (por peinado) para no cargar la escena. */
+const curlCache = new Map();
+function curlGeo(cap, n, rad) {
+  const key = `${cap}|${n}|${rad}`; if (curlCache.has(key)) return curlCache.get(key);
+  const H = HAIR[cap] || HAIR[1], tpl = new THREE.SphereGeometry(1, 6, 4), tp = tpl.attributes.position, tn = tpl.attributes.normal, ti = tpl.index.array;
+  const pos = [], nrm = [], idx = []; let base = 0;
+  for (let i = 0; i < n; i++) {
+    const yy = 1 - 2 * (i + 0.5) / n, ph = i * 2.399963, rr = Math.sqrt(1 - yy * yy);
+    const x = rr * Math.cos(ph) * HEAD.rx * H.s, y = yy * HEAD.ry * H.sy + (H.sy - 1) * 0.02, z = rr * Math.sin(ph) * HEAD.rz * H.s;
+    if (yy < -0.05 || (z > 0.035 && y < 0.07) || (yy < 0.2 && z > 0)) continue;                 // sin rulos en la cara ni en la nuca baja
+    const r = rad * (0.85 + ((i * 37) % 10) / 33);
+    for (let v = 0; v < tp.count; v++) { pos.push(x + tp.getX(v) * r, y + tp.getY(v) * r, z + tp.getZ(v) * r); nrm.push(tn.getX(v), tn.getY(v), tn.getZ(v)); }
+    for (const k of ti) idx.push(base + k); base += tp.count;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3)); g.setIndex(idx);
+  curlCache.set(key, g); return g;
+}
 
 const shell = (parent, geometry, material, x = 0, y = 0, z = 0) => {
   const m = new THREE.Mesh(geometry, material); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m;
@@ -81,7 +101,7 @@ function makeUniformDetails(torso, legs, jerseyMaterial, shortMaterial) {
   const makeDecal = (w, h, y, back = false) => {
     const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512;
     const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace;
-    const material = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const material = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
     const mesh = new THREE.Mesh(mkGeo(decal(PROF.jersey, w, h, y)), material);
     mesh.position.set(0, y, 0); if (back) mesh.rotation.y = Math.PI;
     mesh.renderOrder = 3; torso.add(mesh);
@@ -143,6 +163,12 @@ function makeUniformDetails(torso, legs, jerseyMaterial, shortMaterial) {
       redraw();
     },
     setInfo(info) { lastInfo = info; redraw(); },
+    // La camiseta se ensancha con la contextura: el número, las franjas y los vivos del short tienen que ensancharse igual, o quedan adentro de la tela
+    setBuild(k) {
+      const sx = k, sz = 1 + (k - 1) * 0.8;
+      front.mesh.scale.set(sx, 1, sz); back.mesh.scale.set(sx, 1, sz); jerseySides.scale.set(sx, 1, sz);
+      shortGroups.forEach(g => g.scale.set(sx, 1, sz));
+    },
   };
 };
 
@@ -157,6 +183,8 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
   const soleM = mat(0xf2f2f2, 0.6), sockM = mat(0xffffff, 0.85), lacesM = mat(0xf4f4f4, 0.7);
   const faceM = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.6, vertexColors: true });
   const hairM = mat(hairColor, 0.92), compM = mat(0x111111, 0.8); compM.side = THREE.DoubleSide;
+  const wristM = mat(0xffffff, 0.8), kneeM = mat(0x111111, 0.8); wristM.side = kneeM.side = THREE.DoubleSide;
+  const wristMeshes = [], kneeMeshes = [];                         // [izquierda, derecha]
   const bulkMeshes = [];                                           // piezas que engordan/adelgazan con la contextura
 
   const hips = new THREE.Group(); root.add(hips);                  // sube y baja (altura de la cadera)
@@ -196,7 +224,8 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
     const sleeve = shell(sh, g.sleeve, jm); sleeve.visible = false;
     const h = makeHand(el, x > 0 ? -1 : 1, skin);
     const comp = new THREE.Mesh(COMP_GEO, compM); comp.position.y = -0.13; comp.visible = false; comp.castShadow = true; el.add(comp);   // manga de compresión
-    bulkMeshes.push(ua, fa, sleeve, comp);        // (el deltoides es una esfera unitaria escalada: no se toca)
+    const wb = new THREE.Mesh(WRIST_GEO, wristM); wb.position.y = -0.235; wb.visible = false; wb.castShadow = true; el.add(wb); wristMeshes.push(wb);   // muñequera
+    bulkMeshes.push(ua, fa, sleeve, comp, wb);        // (el deltoides es una esfera unitaria escalada: no se toca)
     return [sh, el, h.hand, h.fingers, sleeve, comp];
   };
   /* ---- piernas ---- */
@@ -215,7 +244,8 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
     sphere(ft, shoeM, [0.042, 0.030, 0.042], [0, -0.016, -0.040]);                       // talón
     sphere(ft, lacesM, [0.020, 0.005, 0.050], [0, 0.020, 0.050]);                        // cordones
     sphere(ft, soleM, [0.052, 0.012, 0.130], [0, -0.032, 0.062]);                        // suela
-    bulkMeshes.push(t, sl, sk, so);
+    const ks = new THREE.Mesh(KNEE_GEO, kneeM); ks.visible = false; ks.castShadow = true; kn.add(ks); kneeMeshes.push(ks);                   // rodillera
+    bulkMeshes.push(t, sl, sk, so, ks);
     legInfo.push({ th, x });
     return [th, kn, ft];
   };
@@ -232,7 +262,7 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
   R.setSkin = hex => { skin.color.setHex(hex); faceM.color.setHex(hex); };
   R.skin.color.setHex(skinColor);
   /* Aspecto: peinado, color de pelo, barba, vincha y manga. Lo que no se indica sale de una semilla (el nombre del jugador).
-     o = { hair (0-8), hairColor ('#rrggbb'), beard (0-2), band ('#rrggbb'), sleeve ('L' | 'R' | 'B'), sleeveColor } */
+     o = { hair (0-8), hairColor ('#rrggbb'), beard (0-2), band ('#rrggbb'), sleeve ('L' | 'R' | 'B'), sleeveColor, wrist ('L' | 'R' | 'B'), wristColor, knee ('L' | 'R' | 'B'), kneeColor } */
   const BROWNS = [0x2b1d14, 0x4a3222, 0x7a5a36, 0x15120f];
   const clearExtra = () => { while (hairExtra.children.length) hairExtra.remove(hairExtra.children[0]); };
   const strands = (n, t0, t1, y, rr, len, r, tilt, hsh) => {                   // mechones colgando alrededor de la nuca y los costados
@@ -252,10 +282,11 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
     if (o.hairColor) hairM.color.set(o.hairColor); else hairM.color.setHex(skin.color.r > 0.6 ? BROWNS[(h >> 9) % BROWNS.length] : 0x15120f);
     // piezas extra
     clearExtra();
-    if (style === 6) sphere(hairExtra, hairM, [0.050, 0.050, 0.050], [0, 0.098, -0.086]);                                  // rodete
+    if (style === 10) { const m = new THREE.Mesh(curlGeo(11, 90, 0.017), hairM); m.castShadow = true; hairExtra.add(m); }          // rizado medio
+    else if (style === 6) sphere(hairExtra, hairM, [0.050, 0.050, 0.050], [0, 0.098, -0.086]);                                  // rodete
     else if (style === 7) { const m = new THREE.Mesh(caps(0.021, 0.13), hairM); m.position.set(0, -0.038, -0.122); m.rotation.x = 0.24; m.castShadow = true; hairExtra.add(m); }   // cola
-    else if (style === 5) strands(15, 1.15, Math.PI * 2 - 1.15, 0.050, [0.084, 0.101], 0.15, 0.011, 0.10, h);               // trenzas
-    else if (style === 8) { strands(17, 1.0, Math.PI * 2 - 1.0, 0.060, [0.092, 0.108], 0.10, 0.021, 0.16, h); strands(8, 1.7, Math.PI * 2 - 1.7, 0.100, [0.060, 0.074], 0.07, 0.022, 0.10, h >> 3); }   // rizos largos
+    else if (style === 5) strands(15, 1.15, Math.PI * 2 - 1.15, 0.050, [0.088, 0.106], 0.15, 0.013, 0.10, h);               // trenzas
+    else if (style === 8) { const m = new THREE.Mesh(curlGeo(20, 70, 0.019), hairM); m.castShadow = true; hairExtra.add(m); strands(17, 1.0, Math.PI * 2 - 1.0, 0.060, [0.092, 0.108], 0.10, 0.021, 0.16, h); strands(8, 1.7, Math.PI * 2 - 1.7, 0.100, [0.060, 0.074], 0.07, 0.022, 0.10, h >> 3); }   // rizos largos
     // vincha (se ajusta al tamaño del pelo; pelado = cráneo)
     band.visible = !!o.band;
     if (o.band) {
@@ -267,13 +298,19 @@ export function makeRig(scene, skinColor = 0xb97a50, hairColor = 0x15120f) {
     const sl = String(o.sleeve || '').toUpperCase();
     compM.color.set(o.sleeveColor || '#111111');
     cmpL.visible = sl === 'L' || sl === 'B'; cmpR.visible = sl === 'R' || sl === 'B';
+    // muñequeras y rodilleras (cada una: 'L' izquierda · 'R' derecha · 'B' ambas; con su color)
+    const side = v => String(v || '').toUpperCase();
+    const wr = side(o.wrist), kn = side(o.knee);
+    wristM.color.set(o.wristColor || '#ffffff'); kneeM.color.set(o.kneeColor || '#111111');
+    wristMeshes[0].visible = wr === 'L' || wr === 'B'; wristMeshes[1].visible = wr === 'R' || wr === 'B';
+    kneeMeshes[0].visible = kn === 'L' || kn === 'B'; kneeMeshes[1].visible = kn === 'R' || kn === 'B';
   };
   /* Contextura: 0.86 (flaco) … 1.18 (corpulento). Engancha hombros y caderas al nuevo ancho. */
   R.setBuild = k => {
     k = Math.min(1.18, Math.max(0.86, k));
     bulkMeshes.forEach(m => { m.scale.set(k, 1, 1 + (k - 1) * 0.8); });
     shL.position.x = base.shx * (0.4 + 0.6 * k); shR.position.x = -base.shx * (0.4 + 0.6 * k);
-    legL.position.x = base.legx * k; legR.position.x = -base.legx * k; R.build = k;
+    legL.position.x = base.legx * k; legR.position.x = -base.legx * k; R.build = k; uniform.setBuild(k);
   };
   /* Mangas cortas (árbitro). */
   R.setSleeves = on => { slvL.visible = on; slvR.visible = on; };
