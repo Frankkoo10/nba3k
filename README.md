@@ -292,3 +292,8 @@ No hay que correr nada nuevo en Supabase (sigue siendo el `004_salas_online.sql`
 
 **Archivos:** `main.js` (catálogos `DUNKS` / `LAYS`, `startDunk`, `updateDunk`, `checkDunkBlocks`, `launchPass`, `poseDunkX`, `poseLayX`, `poseFlashPass`, `blockPose`), `shotsim.js` (nuevo), `ai.js`, `gamepad.js`, `keyboard.js`, `controls.js`.
 **Ojo:** no pude abrir el juego en un navegador mientras lo armaba (sin internet para Three.js); verifiqué la sintaxis, la física de pelota con simulaciones y las posiciones de brazos con cinemática. Si alguna pose se ve rara, avisame cuál y la ajusto.
+
+
+### v30.1 — floater corregido + dribleos con lujo
+- **Floater:** se quedaba corto porque el cálculo del tiro suponía más efecto de rotación del que lleva la pelota. Ahora se resuelve con el mismo efecto con el que sale (en pruebas pasó de entrar 45 de 200 a 200 de 200). Las demás bandejas no cambian.
+- **Dribleos con lujo:** mantené **L2** (o **Z**) y apretá el botón de **cruce/dribleo** (o el flick del stick derecho): *por abajo de las piernas*, *por la espalda*, *stepback* (te despegás hacia atrás y el próximo tiro queda mucho menos marcado) y *giro* (vuelta completa protegiendo la pelota). Gastan más energía que un cruce normal y dejan sentado al defensor más seguido (menos el stepback). Los bots con buen manejo también los usan de vez en cuando. Código: `MOVES` y `startCrossover` en `main.js`.

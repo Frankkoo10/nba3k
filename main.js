@@ -655,7 +655,7 @@ function bestHumanPass(a, h = a?.hum || humans[0]) {   // el compañero que mejo
 }
 const modHeld = h => { const inp = inputOf(h); return !!(inp.kb && KB.down('mod')) || !!inp.P?.down?.mod; };      // ¿está apretado el botón de lujo (L2 / Z)?
 function humanPass(h = humans[0], flash) { if (autoUser || dead || mode !== 'match' || !h) return; const t = bestHumanPass(h.agent, h); if (t) doPass(h.agent, t, (flash ?? modHeld(h)) ? 'flash' : undefined); }
-function humanCrossover(h = humans[0]) { if (!autoUser && !dead && h) startCrossover(h.agent); }
+function humanCrossover(h = humans[0], flash) { if (!autoUser && !dead && h) startCrossover(h.agent, (flash ?? modHeld(h)) ? 'flash' : undefined); }
 function switchPlayer(h = humans[0]) {
   const c = h?.agent;
   if (!c || mode !== 'match' || dead || c.state === 'charge' || c.state === 'shoot' || c.state === 'dunk') return;
@@ -726,7 +726,7 @@ function contestOf(a) {                                // 0..1 qué tan marcado 
     if (o.act === 'block' || !o.grounded) c *= 1.25; else if (!o.def) c *= 0.6;
     best = Math.max(best, clamp(c, 0, 1));
   }
-  return best;
+  return a.sbT > 0 ? best * 0.45 : best;                 // después de un stepback queda más libre
 }
 function aiShoot(a) {                                  // el bot decide tirar: la calidad del tiro define si el "disparo" sale perfecto o errado
   if (!startCharge(a)) return false;
@@ -888,16 +888,25 @@ function launchPass(a, t, style) {
 }
 
 /* ---- dribleo (Ctrl): cruce de mano, cuesta energía; cansado no se puede ---- */
-function startCrossover(a) {
+const MOVES = { legs: { dur: 0.50, label: 'por abajo de las piernas' }, behind: { dur: 0.50, label: 'por la espalda' }, stepback: { dur: 0.55, label: 'stepback' }, spin: { dur: 0.62, label: 'giro' } };
+const MOVE_KEYS = Object.keys(MOVES);
+function startCrossover(a, style) {
   if (a.state !== 'dribble' || B.holder !== a || !a.grounded || a.moveCd > 0) return false;
   if (a.tired || a.stam < 0.1) { if (isHum(a)) say('¡Cansado! No podés driblear así: frená un poco para recuperar energía.'); return false; }
-  a.side *= -1; a.crossT = 0.35; a.moveCd = 0.4; a.stam = Math.max(0, a.stam - 0.045);
-  const fx = Math.sin(a.h), fz = Math.cos(a.h);
+  if (style === undefined && !isHum(a) && mode === 'match' && Math.random() < 0.12 * clamp(((a.info?.handle ?? 70) - 65) / 35, 0, 1)) style = 'flash';
+  if (style === 'flash') { const pool = MOVE_KEYS.filter(k => k !== a.lastMove); style = pool[Math.floor(Math.random() * pool.length)]; a.lastMove = style; }
+  const mv = style ? MOVES[style] : null, fx = Math.sin(a.h), fz = Math.cos(a.h);
+  if (mv) {                                         // dribleo con lujo: más largo, gasta más energía y confunde más al defensor
+    a.moveKind = style; a.moveDur = mv.dur; a.moveT = mv.dur; a.crossT = mv.dur; a.moveCd = mv.dur + 0.1; a.stam = Math.max(0, a.stam - 0.07); a.spinH0 = a.h;
+    if (style !== 'stepback') a.side *= -1;
+    else { a.vel.x -= fx * 3.4; a.vel.z -= fz * 3.4; a.sbT = 0.9; }          // stepback: se despega hacia atrás y queda con espacio para tirar
+    if (isHum(a)) say(`¡Dribleo ${mv.label}!`);
+  } else { a.moveKind = null; a.moveT = 0; a.side *= -1; a.crossT = 0.35; a.moveCd = 0.4; a.stam = Math.max(0, a.stam - 0.045); }
   for (const d of T[1 - a.team].court) {                // un cruce puede dejar sentado al defensor
     if (!d.active || !d.grounded || d.stunT > 0) continue;
     const dx = d.pos.x - a.pos.x, dz = d.pos.z - a.pos.z, dd = Math.hypot(dx, dz);
     if (dd < 1.7 && dd > 0.1 && (dx * fx + dz * fz) / dd > 0.3) {
-      const p = clamp(0.28 + (a.info.handle - d.info.perD) / 120 - (oppTeam(d.team) ? (prof(d).tight - 0.5) * 0.2 : 0), 0.08, 0.6);
+      const p = clamp((0.28 + (a.info.handle - d.info.perD) / 120 - (oppTeam(d.team) ? (prof(d).tight - 0.5) * 0.2 : 0)) * (mv && style !== 'stepback' ? 1.4 : 1), 0.08, 0.75);
       if (Math.random() < p) { d.stunT = 0.75; if (isHum(a) && !isHum(d)) say('¡Lo dejaste sentado!'); }
     }
   }
@@ -962,7 +971,7 @@ function startBlock(a, kind) {
 /* ============ Física del jugador (la misma para vos y para los bots) ============ */
 function fatigue(a) { return a.stam >= 0.45 ? 1 : 0.8 + 0.2 * smooth(a.stam / 0.45); }
 function updateAgent(a, dt, I) {
-  a.blkHit = Math.max(0, (a.blkHit || 0) - dt);
+  a.blkHit = Math.max(0, (a.blkHit || 0) - dt); a.sbT = Math.max(0, (a.sbT || 0) - dt); a.moveT = Math.max(0, (a.moveT || 0) - dt);
   a.actT = Math.max(0, a.actT - dt); a.stunT = Math.max(0, a.stunT - dt); a.moveCd -= dt; a.crossT = Math.max(0, a.crossT - dt);
   if (a.act && a.act !== 'block' && a.actT <= 0) a.act = null;
   if (a.state === 'dunk') { updateDunk(a, dt); return; }
@@ -1012,7 +1021,8 @@ function updateAgent(a, dt, I) {
   else if (I.face != null && a.grounded) { want = I.face; rate = 10; }
   else if (sp > 0.6) { want = Math.atan2(a.vel.x, a.vel.z); rate = Math.max(6, 15 - 1.2 * sp); }
   else if (!human && B.holder && B.holder !== a && !dead) { want = Math.atan2(BP.x - a.pos.x, BP.z - a.pos.z); rate = 6; }
-  if (want !== null) a.h += clamp(wrap(want - a.h), -rate * dt, rate * dt);
+  if (a.moveT > 0 && a.moveKind === 'spin' && a.state === 'dribble') a.h = a.spinH0 + 2 * Math.PI * a.side * smooth(1 - a.moveT / a.moveDur);       // spin move: vuelta completa protegiendo la pelota
+  else if (want !== null) a.h += clamp(wrap(want - a.h), -rate * dt, rate * dt);
 
   if (I.jump && !dead && !(human && inbound) && a.grounded && a.jumpWind <= 0 && !a.act && (a.state === 'dribble' || a.state === 'free')) {
     if (a.state === 'dribble' && tryDunk(a, !!I.mod)) return;
@@ -1154,11 +1164,19 @@ function pose(a, dt) {
   }
   if (st === 'dribble') {              // mano abierta empujando la pelota real (derecha o izquierda según el cruce)
     const t = clamp((BP.y - 0.7) / 0.4, 0, 1), sh = -0.45 - 0.2 * t, el = -0.1 - 1.1 * t, hard = a.dribMode ? 1 : 0;
-    if (a.side > 0) { T.shR = sh; T.elR = el; T.szR = -0.18; T.wR = Math.PI; T.cR = 0.35; T.sR = 0.25; T.shL = -0.35 + s * Aa * 0.3; T.elL = -1.0; T.szL = 0.2; }
+    const sv = a.moveT > 0 && a.moveT > a.moveDur * 0.5 && (a.moveKind === 'legs' || a.moveKind === 'behind') ? -a.side : a.side;      // en la primera mitad del cruce la mano sigue del lado viejo
+    if (sv > 0) { T.shR = sh; T.elR = el; T.szR = -0.18; T.wR = Math.PI; T.cR = 0.35; T.sR = 0.25; T.shL = -0.35 + s * Aa * 0.3; T.elL = -1.0; T.szL = 0.2; }
     else { T.shL = sh; T.elL = el; T.szL = 0.18; T.wL = Math.PI; T.cL = 0.35; T.sL = 0.25; T.shR = -0.35 - s * Aa * 0.3; T.elR = -1.0; T.szR = -0.2; }
     cr += 0.1 * hard + (a.crossT > 0 ? 0.12 : 0);
+    if (a.moveT > 0) {                                                // posturas de los dribleos con lujo
+      const mp = Math.sin(Math.PI * smooth(1 - a.moveT / a.moveDur));
+      if (a.moveKind === 'legs') { cr += 0.22 * mp; a.xLean += 0.15 * mp; }
+      else if (a.moveKind === 'behind') { cr += 0.12 * mp; a.yTw += 0.35 * mp * a.side; }
+      else if (a.moveKind === 'stepback') { cr += 0.18 * mp; a.xLean -= 0.3 * mp; }
+      else if (a.moveKind === 'spin') { cr += 0.15 * mp; a.xLean += 0.1 * mp; }
+    }
     if (B.holder === a && !a.act) {                                   // IK: hombro y codo apuntan a la pelota real (así nunca se ve "despegada")
-      const right = a.side > 0, S = right ? R.shR : R.shL;
+      const right = sv > 0, S = right ? R.shR : R.shL;
       _ik.copy(BP); R.torso.worldToLocal(_ik);                        // pelota en el espacio del torso (incluye inclinación y giro)
       const ez = _ik.z - S.position.z, ey = _ik.y - S.position.y, L1 = 0.30, L2 = 0.455;
       const d = clamp(Math.hypot(ez, ey), 0.2, L1 + L2 - 0.01);
@@ -1318,12 +1336,12 @@ function stepBall(h) {
   }
 }
 
-function solveShot(p0, target, dir, dist, thOver) {   // resuelve la velocidad inicial simulando la misma física
+function solveShot(p0, target, dir, dist, thOver, spin = 18) {   // resuelve la velocidad inicial simulando la misma física
   const hd = target.y - p0.y;
   let th = thOver || (dist < 3.2 ? 1.15 : dist < 6.5 ? 0.95 : 0.85);
   while (dist * Math.tan(th) - hd <= 0.05) th += 0.05;
   let sp = Math.sqrt(G9 * dist * dist / (2 * Math.cos(th) ** 2 * (dist * Math.tan(th) - hd)));
-  const w = dir.clone().cross(UP).multiplyScalar(18), p = V3(), v = V3(), a = V3();
+  const w = dir.clone().cross(UP).multiplyScalar(spin), p = V3(), v = V3(), a = V3();
   for (let it = 0; it < 5; it++) {
     p.copy(p0); v.set(dir.x * Math.cos(th) * sp, Math.sin(th) * sp, dir.z * Math.cos(th) * sp);
     let hit = dist;
@@ -1369,7 +1387,7 @@ function releaseLayup(a) {             // bandeja: arco alto y casi siempre buen
   }
   if (v && !D.rolled && D.miss) { v.applyAxisAngle(UP, gauss() * 0.07); v.multiplyScalar(1 + (Math.random() < 0.5 ? -1 : 1) * (0.05 + Math.random() * 0.07)); }
   if (!v) {
-    v = solveShot(BP, c, dir, dist, phys === 'float' ? 1.5 : 1.25);
+    v = solveShot(BP, c, dir, dist, phys === 'float' ? 1.5 : 1.25, 10);      // se resuelve con el mismo efecto (10) con el que sale la pelota
     v.applyAxisAngle(UP, gauss() * 0.01).multiplyScalar(1 + gauss() * 0.012);
     if (D.miss) { v.applyAxisAngle(UP, gauss() * 0.07); v.multiplyScalar(1 + (Math.random() < 0.5 ? -1 : 1) * (0.05 + Math.random() * 0.07)); }
     w = dir.clone().cross(UP).multiplyScalar(10);
@@ -1417,7 +1435,13 @@ function dribbleControl(a) {
   const sc = a.scale, fx = Math.sin(a.h), fz = Math.cos(a.h), rx = -Math.cos(a.h), rz = Math.sin(a.h);
   const sp = Math.hypot(a.vel.x, a.vel.z), hard = a.dribMode, lat = (0.24 + 0.04 * Math.min(1, sp / 6)) * a.side;
   const fwd = Math.min(0.34 + 0.05 * sp + (hard ? 0.03 : 0), 0.62);
-  const tx = a.pos.x + fx * fwd * sc + rx * lat * sc, tz = a.pos.z + fz * fwd * sc + rz * lat * sc;
+  let fw2 = fwd, lt2 = lat;
+  if (a.moveT > 0 && (a.moveKind === 'legs' || a.moveKind === 'behind')) {      // la pelota cruza de una mano a la otra: por entre las piernas o por detrás de la espalda
+    const p = smooth(1 - a.moveT / a.moveDur), sd = 0.24 + 0.04 * Math.min(1, sp / 6), mid = Math.sin(Math.PI * p);
+    lt2 = lerp(-a.side, a.side, p) * sd;                                         // del lado viejo al nuevo
+    fw2 = fwd + (a.moveKind === 'legs' ? (0.10 - fwd) * mid : (-0.28 - fwd) * mid);
+  }
+  const tx = a.pos.x + fx * fw2 * sc + rx * lt2 * sc, tz = a.pos.z + fz * fw2 * sc + rz * lt2 * sc;
   const g = a.crossT > 0 ? 22 : 18; let ex = (tx - BP.x) * g, ez = (tz - BP.z) * g; const el = Math.hypot(ex, ez);
   if (el > 9) { ex *= 9 / el; ez *= 9 / el; }                          // la corrección hacia la mano tiene tope (si no, la pelota sale disparada)
   BV.x = a.vel.x + ex; BV.z = a.vel.z + ez;
@@ -1944,7 +1968,7 @@ function netAct(h, m) {
   else if (m.k === 'pass') humanPass(h, !!m.fl);
   else if (m.k === 'steal') { if (!startSteal(c) && c.state === 'dribble') startCrossover(c); }
   else if (m.k === 'switch') switchPlayer(h);
-  else if (m.k === 'dribble') humanCrossover(h);
+  else if (m.k === 'dribble') humanCrossover(h, !!m.fl);
 }
 function onNetGame(m) {
   if (netRole === 'host') {
@@ -2036,7 +2060,7 @@ function guestAct(act, h) {                                                     
   else if (act === 'pass') { if (B.holder === me) guestSend('pass', { fl: modHeld(h) ? 1 : 0 }); else if (h.dev === 'pad') guestSend('switch'); }
   else if (act === 'steal') guestSend('steal');
   else if (act === 'switch') guestSend('switch');
-  else if (act === 'dribble') guestSend('dribble');
+  else if (act === 'dribble') guestSend('dribble', { fl: modHeld(h) ? 1 : 0 });
 }
 function guestRelease(act, h) {
   if (act !== 'shoot') return;

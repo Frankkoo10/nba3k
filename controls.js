@@ -15,7 +15,7 @@ const tips = () => tab === 'kb' ? [
   `<b>Tirar:</b> mantené <b>${kbL('shoot')}</b> para cargar el tiro y soltá cuando la barra toque la línea blanca (tiro perfecto).`,
   `<b>Pasar:</b> <b>${kbL('pass')}</b> le pasa a la flecha verde. <b>${kbL('dribble')}</b> = cruce; mantenelo para dribleo veloz.`,
   `<b>Cerca del aro,</b> <b>${kbL('jump')}</b> = bandeja (lento) o mate (corriendo). Sin la pelota sirve para saltar, taponar y pelear rebotes.`,
-  `<b>Con lujo:</b> mantené <b>${kbL('mod')}</b> y apretá pasar (pases por la espalda, sin mirar, de pique…) o saltar cerca del aro (mates de espaldas, 360, molino, por debajo de la pierna, finger roll…).`,
+  `<b>Con lujo:</b> mantené <b>${kbL('mod')}</b> y apretá pasar (pases por la espalda, sin mirar, de pique…) o saltar cerca del aro (mates de espaldas, 360, molino, por debajo de la pierna, finger roll…), o el cruce (<b>${kbL('dribble')}</b>) para dribleos con lujo.`,
   `<b>Defensa:</b> <b>${kbL('steal')}</b> roba (si insistís, te cobran falta) · <b>${kbL('switch')}</b> cambia de jugador.`,
   `<b>${kbL('camera')}</b> cambia la cámara (2K / TV / libre). En cámara libre el mouse mueve la vista; la rueda hace zoom.`,
   `<b>Esc</b> o <b>P</b> = pausa.`,
@@ -26,7 +26,7 @@ const tips = () => tab === 'kb' ? [
   `<b>Con la pelota:</b> <b>${padL('shoot')}</b> mantené y soltá en la línea blanca · <b>${padL('pass')}</b> pasar · <b>${padL('steal')}</b> cruce · <b>${padL('dribble')}</b> dribleo veloz. <b>Stick derecho:</b> un empujón rápido = cruce.`,
   `<b>Sin la pelota</b> (los botones cambian solos y se ven en pantalla): <b>${padL('shoot')}</b> tapona / rebota · <b>${padL('pass')}</b> cambia de jugador · <b>${padL('steal')}</b> roba.`,
   `<b>${padL('jump')}:</b> saltar. Cerca del aro = bandeja o mate.`,
-  `<b>${padL('mod')} (mantener) = lujo:</b> con <b>${padL('pass')}</b> hace pases especiales; con <b>${padL('jump')}</b> cerca del aro, mates y bandejas especiales. Sin apretarlo salen de vez en cuando igual.`,
+  `<b>${padL('mod')} (mantener) = lujo:</b> con <b>${padL('pass')}</b> hace pases especiales; con <b>${padL('jump')}</b> cerca del aro, mates y bandejas especiales. Sin apretarlo salen de vez en cuando igual. Con <b>${padL('dribble')}</b> (o el cruce) hace dribleos con lujo: por abajo de las piernas, por la espalda, stepback y giro.`,
   `<b>De a 2, 3 o 4:</b> cada joystick maneja a su propio jugador con estos mismos botones. Se suman en <b>Partido casual → Jugadores</b> apretando un botón; ◀ ▶ elige el equipo y ○ sale. <b>${padL('pass')}</b> sin la pelota cambia a un compañero libre.`,
   `<b>Cruceta ↑ ↓:</b> zoom · <b>${padL('camera')}:</b> cámara · <b>${padL('menu')}:</b> pausa. En cámara libre, el stick derecho mueve la vista.`,
 ];
