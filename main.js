@@ -9,11 +9,16 @@ import { makeRig, mkJ, applyPose } from './rig.js';
 import { fallbackRoster, loadRoster, SKIN_TONES } from './roster.js';
 import * as PM from './prematch.js';
 import * as Online from './online.js';
+import { SnapBuffer, STATES, MODES, SNAP_HZ, r2, r3, lerpAngle } from './netsync.js';
 import { nickname, lum, kitById } from './kits.js';
 import * as Pad from './gamepad.js';
 import * as KB from './keyboard.js';
 import * as Pause from './pause.js';
 import { PROFILES, aiPrepare, aiThink, newAIState, shotQuality, bestPass, styledProfile } from './ai.js';
+
+/* ============ Partido online: quién soy ============ */
+let netRole = null;                    // null (partido normal) · 'host' (simula todo y manda snapshots) · 'guest' (manda sus controles y dibuja lo que recibe)
+let fadeV = 0;
 
 /* ============ Utilidades y constantes (medidas reales NBA) ============ */
 const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -285,22 +290,23 @@ let diff = UI.settings.diff || 'hard';
 let camHeight = 0;
 const teamFouls = [0, 0];
 let kitA = null, kitB = null;                         // camisetas elegidas en el menú previo (kits.js)
-const opts = { shotClock: true, fatigue: true, autoSubs: true, style: null };   // reglas y estilo de juego elegidos en el menú previo
-let styleKey = '';
+const opts = { shotClock: true, fatigue: true, autoSubs: true, style: null, styleB: null };   // reglas y estilo de juego elegidos en el menú previo
+let styleKey = '', styleKeyB = '';
 const profCache = new Map();
 const stats = { shots: 0, makes: 0, streak: 0, best: 0, xp: 0 };
 let pendingShot = false, shotCounter = 0;
 let dead = null, inbound = false, ballOut = false, audioCtx = null;   // dead = pelota muerta (punto, afuera, violación) con secuencia del árbitro
 const tvc = { x: 0, z: 0 };
 const outsideLines = (x, z, m = 0) => Math.abs(x) > COURT_X + m || Math.abs(z) > COURT_Z + m;
-const fadeEl = $('fade'), setFade = v => { fadeEl.style.opacity = v; };
-const say = t => { $('message').textContent = t; };
+const fadeEl = $('fade'), setFade = v => { fadeV = v; fadeEl.style.opacity = v; };
+const say = t => { $('message').textContent = t; if (netRole === 'host') Online.sendGame({ t: 'E', k: 'say', v: t }, true); };
 const updatePowerUI = () => { const c = humans[0]?.agent || ctrl; $('powerFill').style.width = `${c.charge * 100}%`; $('powerPercent').textContent = `${Math.round(c.charge * 100)}%`; };
 const activeAgents = () => agents.filter(a => a.active);
 const prof = a => {                                   // perfil de IA: dificultad (+ estilo de juego en tu equipo)
-  const side = (a.team === userTeam || humansOn(a.team).length) ? 'ally' : 'opp', mine = a.team === userTeam, key = `${diff}|${side}|${mine ? styleKey : ''}`;
+  const side = (a.team === userTeam || humansOn(a.team).length) ? 'ally' : 'opp', mine = a.team === userTeam;
+  const sty = mine ? opts.style : (netRole && opts.styleB ? opts.styleB : null), sk = mine ? styleKey : (sty ? styleKeyB : ''), key = `${diff}|${side}|${sk}`;   // online: cada equipo con el estilo que armó su dueño
   let p = profCache.get(key);
-  if (!p) { p = styledProfile(PROFILES[diff][side], side === 'ally' && mine ? opts.style : null); profCache.set(key, p); }
+  if (!p) { p = styledProfile(PROFILES[diff][side], side === 'ally' && sty ? sty : null); profCache.set(key, p); }
   return p;
 };
 function takeAgent(h, a) {                            // el humano h pasa a controlar al jugador a (el anterior queda en manos de la IA)
@@ -323,13 +329,14 @@ function rumbleH(h, ms, mag) { if (h.dev === 'pad') Pad.rumble(ms, mag, h.pad); 
 function setupHumans(S, solo) {
   humans.length = 0; for (const a of agents) a.hum = null;
   const list = solo ? [{ dev: 'kb', team: 0 }] : (S.humans?.length ? S.humans : [{ dev: 'kb', team: 0 }]);   // cada casilla trae su dispositivo: 'kb' (teclado y mouse, solo uno) o 'pad' (un joystick)
-  list.slice(0, 4).forEach((d, i) => humans.push({ i, dev: d.dev === 'pad' ? 'pad' : 'kb', pad: d.pad ?? null, team: d.team ? 1 : 0, agent: null, lock: 0, name: 'J' + (i + 1), color: HCOL[i], P: null, connected: true }));
+  list.slice(0, 4).forEach((d, i) => humans.push({ i, dev: d.dev === 'pad' ? 'pad' : d.dev === 'net' ? 'net' : 'kb', pad: d.pad ?? null, team: d.team ? 1 : 0, agent: null, lock: 0, name: 'J' + (i + 1), color: HCOL[i], P: null, connected: true, net: d.dev === 'net' ? mkNetIn() : null }));
   humans[0].team = 0;                                   // el primer jugador siempre es del equipo Local (con el joystick que sea, o con el teclado)
   for (const h of humans) {
     const court = T[h.team].court;
     let a;
     if (solo) a = solo;
     else if (h.i === 0) a = court[S.ctrlSlot] || court[0];
+    else if (h.i === 1 && S.online && S.ctrlSlotB != null) a = court[S.ctrlSlotB] || court[0];      // online: el invitado arranca con el jugador que eligió
     else a = court.filter(x => !x.hum).sort((x, y) => (y.info?.ovr ?? 0) - (x.info?.ovr ?? 0) || x.slot - y.slot)[0] || court.find(x => !x.hum);
     h.agent = a; a.hum = h;
   }
@@ -431,8 +438,9 @@ Pause.init({
   canOpen: () => !paused && !PM.isOpen() && !UI.isMainOpen() && !Online.isOpen(),
   isTraining: () => mode === 'training', info: pauseInfo,
   onOpen: () => {
-    paused = true; KB.releaseAll();
-    for (const a of [ctrl, ...humans.map(h => h.agent)]) if (a && a.state === 'charge') { a.state = 'dribble'; a.charge = 0; }     // un tiro a medio cargar se cancela
+    if (!netRole) paused = true;                                      // online el partido NO se frena: el rival sigue jugando
+    KB.releaseAll(); net.lc = null;
+    if (!netRole) for (const a of [ctrl, ...humans.map(h => h.agent)]) if (a && a.state === 'charge') { a.state = 'dribble'; a.charge = 0; }     // un tiro a medio cargar se cancela
     updatePowerUI();
     document.exitPointerLock?.();
   },
@@ -440,6 +448,7 @@ Pause.init({
   onRestart: () => resetTraining(), onChange: () => openTrainSetup(true), onExit: () => exitToMain(),
 });
 function exitToMain() {
+  if (netRole) { Online.quitMatch(); return; }                          // online: abandonar avisa al rival y vuelve al lobby
   paused = true; dead = null; setFade(0); document.exitPointerLock?.(); flushXp();
   PM.closeWizard(); TS.close(); UI.showMain();
 }
@@ -467,21 +476,34 @@ function loadSetup(S) {                               // copia al juego lo que s
   styleKey = JSON.stringify(S.style);
 }
 const QN = ['1ST', '2ND', '3RD', '4TH', 'OT'];
-async function startGame() {
+async function startGame(S0 = null, role = null) {        // role: null = partido normal · 'host' / 'guest' = partido online
   try { await PM.ready(); } catch { /* planteles genéricos */ }
-  const S = PM.getSetup();
+  const S = S0 || PM.getSetup();
+  netRole = role; resetNet();
+  if (role) net.pool = new Map([...S.lineupA.starters, ...S.lineupA.bench, ...S.lineupB.starters, ...S.lineupB.bench].map(p => [infoKey(p), p]));
   loadSetup(S);
+  if (role === 'guest') { const L = PM.getSetup(); camHeight = L.camHeight || 0; S.cam = L.cam; }      // la cámara es de cada uno, no del anfitrión
+  opts.styleB = role ? (S.styleB || null) : null; styleKeyB = JSON.stringify(S.styleB || '');
   setCourt(courtFor(S.courtTeam));                      // cancha del local o del visitante, según el menú del partido
   setMode('match'); applyTeams(); applyRosters(S.lineupA, S.lineupB);
   scoreA = scoreB = 0; quarter = 1; teamFouls[0] = teamFouls[1] = 0; B.foulPending = null; for (const t of [0, 1]) [...T[t].court.map(a => a.info), ...T[t].bench].forEach(i => { i.pf = 0; }); clockT = qLen; attSign = [-1, 1]; shotClock = 24; B.possTeam = 0; B.lastTeam = 0;
   for (const a of agents) { a.stam = 1; a.tired = false; a.act = null; a.stunT = 0; a.state = 'free'; a.ai = newAIState(); a.pos.set((a.slot - 2) * 2, 0, a.team === 0 ? -4 : 4); }
-  B.holder = null; B.mode = 'dead'; autoUser = false; setupHumans(S);
-  PM.closeWizard(); paused = false; shotCounter = 0;
-  camMode = S.cam;
-  if (multi()) { if (camMode === 2) camMode = 0; if (teamsWithHumans() > 1 && camMode === 0) camMode = 1; }     // varios jugadores: sin cámara libre; si juegan en equipos contrarios, cámara de TV (se ve parejo para los dos lados)
+  B.holder = null; B.mode = 'dead'; autoUser = false; dead = null;
+  if (role === 'guest') setupGuestHumans(S);
+  else {
+    if (role === 'host') S.humans = [{ dev: S.humans[0].dev, pad: S.humans[0].pad, team: 0 }, { dev: 'net', team: 1 }];     // el invitado es el segundo humano: sus controles llegan por la red
+    setupHumans(S);
+  }
+  if (role) PM.hideForMatch(); else PM.closeWizard();
+  paused = false; shotCounter = 0;
+  camMode = S.cam; cam2k.snap = true;
+  if (role) { if (camMode === 2) camMode = 0; }                                  // online no hay cámara libre
+  else if (multi()) { if (camMode === 2) camMode = 0; if (teamsWithHumans() > 1 && camMode === 0) camMode = 1; }     // varios jugadores: sin cámara libre; si juegan en equipos contrarios, cámara de TV (se ve parejo para los dos lados)
   if (camMode === 2) yaw = ctrl.h + Math.PI; showCamName();
+  if (role === 'guest') { say('Conectando con el anfitrión…'); return; }         // el invitado no simula: espera los snapshots
   startDead('quarter', 0, 0, null, 0, { instant: true });
-  if (multi()) say(humans.map(h => `${h.name} ${h.dev === 'kb' ? 'teclado' : 'joystick'}`).join(' · ') + (teamsWithHumans() > 1 ? ' · ¡Versus!' : ' · ¡Cooperativo!'));
+  if (role) say(`${teamA.ab} vs ${teamB.ab} · ¡Partido online!`);
+  else if (multi()) say(humans.map(h => `${h.name} ${h.dev === 'kb' ? 'teclado' : 'joystick'}`).join(' · ') + (teamsWithHumans() > 1 ? ' · ¡Versus!' : ' · ¡Cooperativo!'));
   else { say(KB.hint()); if (Pad.state.connected) say(Pad.hint()); }
 }
 const cache = {};
@@ -512,6 +534,10 @@ function tickGame(dt) {
 function finishGame() {
   const w = scoreA > scoreB;
   paused = true; document.exitPointerLock?.();
+  if (netRole === 'host') {                                                       // online: resultado para los dos (la XP se da en onMatchEnded)
+    const tm = t => ({ ab: t.ab, name: t.name, logo: t.logo });
+    Online.matchOver({ sa: scoreA, sb: scoreB, ta: tm(teamA), tb: tm(teamB) }); return;
+  }
   PM.openWizard({ step: 4, banner: `Final: ${teamA.ab} ${scoreA} - ${scoreB} ${teamB.ab} · ${scoreA === scoreB ? 'Empate' : w ? '¡Ganaste!' : 'Perdiste'}` });
   if (w) queueXp(25); queueXp(10); flushXp();
 }
@@ -524,7 +550,7 @@ document.addEventListener('pointerlockchange', () => {
   const had = hasPointer; hasPointer = document.pointerLockElement === renderer.domElement;
   if (had && !hasPointer && !paused && performance.now() - unlockT > 400) openPause();   // Esc con el mouse capturado: el navegador se come la tecla, así que pausamos acá
 });
-document.addEventListener('visibilitychange', () => { if (document.hidden && !paused && mode === 'match') openPause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && !paused && mode === 'match' && !netRole) openPause(); });
 document.addEventListener('mousemove', e => {
   if (!hasPointer || paused || camMode !== 2) return;
   yaw -= e.movementX * 0.0022 * UI.settings.sens;
@@ -540,6 +566,7 @@ function showCamName() { const el = $('camName'); el.textContent = `${CAM_NAMES[
 /* Todas las entradas (teclado, mouse y, abajo, joystick) terminan en las mismas acciones: así se pueden reasignar sin tocar el juego */
 const kbHuman = () => (humans.length === 1 ? humans[0] : humans.find(x => x.dev === 'kb'));   // quién juega con teclado y mouse: el único humano, o el que eligió teclado (puede ser cualquier casilla, no solo J1)
 function pressAction(act, h = kbHuman()) {                       // teclado y mouse (los joysticks entran por padGame)
+  if (netRole === 'guest') { guestAct(act, h); return; }
   if (act === 'reset') { if (mode === 'training') resetTraining(); return; }
   if (act === 'camera') { cycleCamera(); return; }
   const c = h?.agent; if (!c) return;
@@ -549,11 +576,11 @@ function pressAction(act, h = kbHuman()) {                       // teclado y mo
   else if (act === 'switch') switchPlayer(h);
   else if (act === 'dribble') humanCrossover(h);
 }
-function releaseAction(act, h = kbHuman()) { const c = h?.agent; if (act === 'shoot' && c?.state === 'charge') releaseCharge(c); }
+function releaseAction(act, h = kbHuman()) { if (netRole === 'guest') { guestRelease(act, h); return; } const c = h?.agent; if (act === 'shoot' && c?.state === 'charge') releaseCharge(c); }
 document.addEventListener('keydown', e => {
   if (KB.captureKey(e)) return;                       // ← en Controles esperando una tecla nueva
   if (typing(e)) return;                              // ← escribiendo en un campo (email, contraseña…): el juego no toca ninguna tecla
-  if (paused) return;
+  if (paused || (netRole && menuLock())) return;
   const acts = KB.actionsOf(e.code);
   if (!acts.length) return;
   e.preventDefault();
@@ -592,13 +619,17 @@ document.addEventListener('mouseup', e => {
 
 /* ---- acciones del jugador humano ---- */
 /* De dónde lee cada humano: solo = teclado y mouse + cualquier joystick; varios = cada uno con su dispositivo (un joystick propio, o el teclado y mouse para uno solo) */
+const menuLock = () => Pause.isOpen() || !$('settings').hidden || !$('controls').hidden;       // online el partido sigue con el menú abierto: sin tocar los controles mientras tanto
 function inputOf(h) {
+  if (netRole && h.dev !== 'net' && menuLock()) return { kb: false, P: null };
+  if (h.dev === 'net') return { kb: false, P: h.net ? h.net.P : null };       // el invitado: sus controles llegan por la red
   if (humans.length === 1) return { kb: true, P: Pad.state };          // jugando solo: sirve el teclado y también cualquier joystick que toques
   if (h.dev === 'kb') return { kb: true, P: null };
   return { kb: false, P: h.P && h.P.connected ? h.P : null };
 }
-const humanActive = h => humans.length === 1 || h.dev === 'kb' || !!(h.P && h.P.connected);
+const humanActive = h => humans.length === 1 || h.dev === 'kb' || h.dev === 'net' || !!(h.P && h.P.connected);
 function humanDir(h = humans[0]) {
+  if (h?.dev === 'net') { const n = h.net; if (!n || !n.m) return null; const l = Math.hypot(n.wx, n.wz) || 1; return V3(n.wx / l, 0, n.wz / l); }    // ya viene en ejes del mundo (el invitado lo calculó con su cámara)
   const f = V3(-Math.sin(yaw), 0, -Math.cos(yaw)), r = V3(Math.cos(yaw), 0, -Math.sin(yaw)), w = V3(), inp = inputOf(h);
   if (inp.kb) { if (KB.down('up')) w.add(f); if (KB.down('down')) w.sub(f); if (KB.down('right')) w.add(r); if (KB.down('left')) w.sub(r); }
   if (inp.P && inp.P.mag > 0) w.addScaledVector(f, -inp.P.ly).addScaledVector(r, inp.P.lx);      // stick izquierdo (relativo a la cámara)
@@ -862,7 +893,7 @@ function updateAgent(a, dt, I) {
   } else a.stam += 0.10 * dt;
   a.stam = clamp(a.stam, 0, 1);
   if (!opts.fatigue) { a.stam = 1; a.tired = false; }                // cansancio apagado
-  if (!a.tired && a.stam < 0.08) { a.tired = true; if (isHum(a)) say('¡Estás cansado! Frená un momento para recuperar energía.'); }
+  if (!a.tired && a.stam < 0.08) { a.tired = true; if (isHum(a) && a.hum.dev !== 'net') say('¡Estás cansado! Frená un momento para recuperar energía.'); }
   else if (a.tired && a.stam > 0.3) a.tired = false;
 
   let want = null, rate = 0;
@@ -1246,6 +1277,7 @@ function restartSpot(kind, a, b) {
   const sz = Math.sign(z) || 1; return { x: clamp(x, -5.5, 5.5), z: sz * (COURT_Z + M), ix: 0, iz: -sz };
 }
 function whistle() {
+  if (netRole === 'host') Online.sendGame({ t: 'E', k: 'w' }, true);
   try {
     audioCtx ??= new AudioContext(); const t = audioCtx.currentTime;
     const o = audioCtx.createOscillator(), l = audioCtx.createOscillator(), lg = audioCtx.createGain(), g = audioCtx.createGain();
@@ -1591,7 +1623,7 @@ const trainSign = { v: -1 };
 const _cf = { pos: V3(), y: 0 };
 function camSubject() {                                 // con varios humanos la cámara sigue el centro del grupo (más la pelota)
   if (dead?.ftShooter) return dead.ftShooter;
-  if (!multi()) return ctrl;
+  if (!multi() || netRole) return ctrl;                 // online: cada uno ve la cancha desde su propio jugador
   _cf.pos.set(0, 0, 0); _cf.y = 0;
   for (const h of humans) { _cf.pos.add(h.agent.pos); _cf.y += h.agent.y; }
   _cf.pos.multiplyScalar(1 / humans.length); _cf.y /= humans.length;
@@ -1616,7 +1648,7 @@ function updateCamera(dt) {
     camera.position.set(-22, 11.5, 0); camera.lookAt(tvc.x * 0.6 - 1.2, 0.8, clamp(tvc.z, -lim, lim));
   } else if (camMode === 0) {          // cámara 2K: alta, detrás del jugador, mirando hacia el aro que atacás; se abre para meter a todos los jugadores cercanos
     if (mode === 'training') { if (c.pos.z > 2) trainSign.v = 1; else if (c.pos.z < -2) trainSign.v = -1; }
-    const sg = dead?.ftHoop ? dead.ftHoop.s : (mode === 'training' ? trainSign.v : attSign[userTeam]);
+    const sg = dead?.ftHoop ? dead.ftHoop.s : (mode === 'training' ? trainSign.v : attSign[netRole === 'guest' ? 1 : userTeam]);
     yaw = sg > 0 ? Math.PI : 0;
     const fx = lerp(c.pos.x, BP.x, 0.3), fz = lerp(c.pos.z, BP.z, 0.3);
     let ext = 0;
@@ -1641,6 +1673,173 @@ function updateCamera(dt) {
     camera.lookAt(_p.copy(camT).addScaledVector(r, 0.55).addScaledVector(f, 3));
   }
   sun.position.set(camT.x - 6, 16, camT.z + 8); sun.target.position.set(camT.x, 0, camT.z);
+}
+
+/* ============================================================================
+   Partido online
+   - ANFITRIÓN: corre el juego completo (los 10 jugadores, la pelota, las reglas, los bots). El invitado es un humano más (dev 'net')
+     cuyos controles llegan por la red. Manda un snapshot ~20 veces por segundo.
+   - INVITADO: no simula nada. Guarda los snapshots y dibuja el partido ~110 ms en el pasado interpolando. Sus controles se mandan al anfitrión.
+   Mensajes (Online.sendGame):  S snapshot (host→guest, rápido) · I controles (guest→host, rápido) · A acción (guest→host, confiable) · E evento (host→guest, confiable)
+   ============================================================================ */
+const JK = Object.keys(mkJ());                                   // orden fijo de las articulaciones en el snapshot
+const net = { acc: 0, n: 0, buf: new SnapBuffer(), delay: 110, pool: null, inAcc: 0, lastIn: '', lastInT: 0, lc: null, lastScore: null, lost: false };
+function mkNetIn() { return { wx: 0, wz: 0, m: 0, t: performance.now(), P: { mag: 1, lx: 0, ly: 0, down: {}, amt: { sprint: 0 } } }; }
+function resetNet() { net.acc = 0; net.n = 0; net.buf.reset(); net.inAcc = 0; net.lastIn = ''; net.lastInT = 0; net.lc = null; net.lastScore = null; net.lost = false; net.pool = null; for (const a of agents) { a._ik = undefined; a._ss = 'free'; } }
+const infoKey = i => (i ? String(i.id ?? i.name) : '');
+const idxOf = a => (a ? agents.indexOf(a) : -1);
+const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
+
+/* ---- anfitrión ---- */
+function buildSnap() {
+  net.n++;
+  const ag = agents.map(a => {
+    const k = infoKey(a.info), row = [r3(a.pos.x), r3(a.y), r3(a.pos.z), r3(a.h), Math.max(0, STATES.indexOf(a.state)), Math.round(a.charge * 100), Math.round(a.stam * 100), (a.active ? 1 : 0) | (a.tired ? 2 : 0), 0];
+    if (a._ik !== k || net.n % 80 === 1) { a._ik = k; row[8] = k; }                       // quién es cada uno (cambia solo con los cambios de jugadores)
+    for (const key of JK) row.push(r3(a.J[key]));
+    return row;
+  });
+  const q = ball.quaternion, d = dead;
+  return {
+    t: 'S', n: net.n, T: performance.now(), a: ag,
+    b: [r3(BP.x), r3(BP.y), r3(BP.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w), idxOf(B.holder), Math.max(0, MODES.indexOf(B.mode))],
+    g: [scoreA, scoreB, quarter, r2(clockT), r2(shotClock), attSign[0], B.possTeam | 0, d ? 1 : 0, d?.ftShooter ? idxOf(d.ftShooter) : -1, d?.ftHoop ? d.ftHoop.s : 0, r2(fadeV)],
+    r: [r3(R3.root.position.x), r3(R3.root.position.z), r3(R3.root.rotation.y), ...JK.map(k => r3(J3[k]))],
+    c: humans.map(h => idxOf(h.agent)),
+  };
+}
+function hostNetTick(dt) {
+  const now = performance.now();
+  for (const h of humans) if (h.dev === 'net' && h.net && now - h.net.t > 1500 && h.net.m) { h.net.m = 0; h.net.P.down = {}; h.net.P.amt.sprint = 0; }      // sin noticias del invitado: se queda quieto
+  net.acc += dt; if (net.acc < 1 / SNAP_HZ) return; net.acc = 0;
+  Online.sendGame(buildSnap(), false);
+}
+/** Controles y acciones que llegan del invitado (el anfitrión las valida y las simula con las mismas funciones que el teclado). */
+function netAct(h, m) {
+  const c = h.agent; if (!c || mode !== 'match') return;
+  if (m.k === 'shoot') startCharge(c);
+  else if (m.k === 'release') { if (c.state === 'charge') { c.charge = clamp(+m.ch || 0, 0, 1); releaseCharge(c); } }       // el invitado manda su propia carga: así el tiro perfecto no depende de la demora de la red
+  else if (m.k === 'pass') humanPass(h);
+  else if (m.k === 'steal') { if (!startSteal(c) && c.state === 'dribble') startCrossover(c); }
+  else if (m.k === 'switch') switchPlayer(h);
+  else if (m.k === 'dribble') humanCrossover(h);
+}
+function onNetGame(m) {
+  if (netRole === 'host') {
+    const h = humans.find(x => x.dev === 'net'); if (!h) return;
+    if (m.t === 'I') {
+      const n = h.net; n.wx = +m.wx || 0; n.wz = +m.wz || 0; n.m = m.m ? 1 : 0; n.t = performance.now();
+      Object.assign(n.P.down, { sprint: !!m.sp, jump: !!m.jp, dribble: !!m.db, shoot: !!m.sh }); n.P.amt.sprint = +m.spA || 0; n.P.mag = +m.an || 0;
+    } else if (m.t === 'A') netAct(h, m);
+  } else if (netRole === 'guest') {
+    if (m.t === 'S') { if (net.buf.push(m, performance.now())) ingestSnap(m); }
+    else if (m.t === 'E') { if (m.k === 'say') say(m.v); else if (m.k === 'w') whistle(); }
+  }
+}
+
+/* ---- invitado ---- */
+function setupGuestHumans(S) {
+  humans.length = 0; for (const a of agents) a.hum = null;
+  const L = PM.localDevice();
+  humans.push({ i: 0, dev: 'net', pad: null, team: 0, agent: T[0].court[S.ctrlSlot] || T[0].court[0], lock: 0, name: 'J1', color: HCOL[0], P: null, connected: true, net: null });
+  humans.push({ i: 1, dev: L.dev === 'pad' ? 'pad' : 'kb', pad: L.pad ?? null, team: 1, agent: T[1].court[S.ctrlSlotB ?? 0] || T[1].court[0], lock: 0, name: 'J2', color: HCOL[1], P: null, connected: true });
+  for (const h of humans) h.agent.hum = h;
+  ctrl = humans[1].agent; ctrlLock = 0;
+  for (const a of agents) if (a.info) drawLabel(a);
+  buildMpHud();
+}
+function ingestSnap(sn) {                                // lo que no se interpola: quién es cada jugador (cambios de suplentes)
+  sn.a.forEach((row, i) => {
+    const key = row[8]; if (typeof key !== 'string' || !key) return;
+    const a = agents[i]; if (infoKey(a.info) === key) return;
+    const p = net.pool?.get(key); if (p) setInfo(a, { ...p });
+  });
+}
+function viewerStep(dt) {
+  const smp = net.buf.sample(net.buf.at(performance.now(), net.delay)); if (!smp) return;
+  const { a: A, b: Bk } = smp, k = A === Bk ? 0 : smp.k;
+  for (let i = 0; i < agents.length; i++) {
+    const a = agents[i], ra = A.a[i], rb = Bk.a[i]; if (!ra || !rb) continue;
+    a.pos.set(lerp(ra[0], rb[0], k), 0, lerp(ra[2], rb[2], k)); a.y = lerp(ra[1], rb[1], k); a.h = lerpAngle(ra[3], rb[3], k);
+    a._ss = STATES[rb[4]] || 'free'; a.state = a._ss; a.charge = rb[5] / 100; a.stam = rb[6] / 100; a.active = !!(rb[7] & 1); a.tired = !!(rb[7] & 2);
+    for (let j = 0; j < JK.length; j++) a.J[JK[j]] = lerp(ra[9 + j], rb[9 + j], k);
+    applyPose(a.R, a.J); a.R.root.position.set(a.pos.x, a.y, a.pos.z); a.R.root.rotation.y = a.h; a.R.root.updateMatrixWorld(true);
+  }
+  const ba = A.b, bb = Bk.b;
+  BP.set(lerp(ba[0], bb[0], k), lerp(ba[1], bb[1], k), lerp(ba[2], bb[2], k));
+  _qa.set(ba[3], ba[4], ba[5], ba[6]); _qb.set(bb[3], bb[4], bb[5], bb[6]); ball.quaternion.copy(_qa).slerp(_qb, k);
+  B.holder = bb[7] >= 0 ? agents[bb[7]] : null; B.mode = MODES[bb[8]] || 'loose';
+  const g = Bk.g;
+  if (net.lastScore && (g[0] !== net.lastScore[0] || g[1] !== net.lastScore[1])) arena.cheer(2.4);
+  net.lastScore = [g[0], g[1]];
+  scoreA = g[0]; scoreB = g[1]; quarter = g[2]; clockT = g[3]; shotClock = g[4]; attSign = [g[5], -g[5]]; B.possTeam = g[6];
+  dead = g[7] ? { phase: 0, ftShooter: g[8] >= 0 ? agents[g[8]] : null, ftHoop: g[9] ? { s: g[9] } : null } : null;
+  setFade(g[10]);
+  const ra = A.r, rb = Bk.r;                                                           // árbitro
+  R3.root.position.set(lerp(ra[0], rb[0], k), 0, lerp(ra[1], rb[1], k)); R3.root.rotation.y = lerpAngle(ra[2], rb[2], k);
+  for (let j = 0; j < JK.length; j++) J3[JK[j]] = lerp(ra[3 + j], rb[3 + j], k);
+  applyPose(R3, J3); R3.root.visible = true; R3.root.updateMatrixWorld(true);
+  humans.forEach((h, i) => { const ai = Bk.c[i]; if (ai >= 0 && agents[ai] && agents[ai] !== h.agent) takeAgent(h, agents[ai]); });       // a quién controla cada uno (lo decide el anfitrión)
+  ctrl = humans[1].agent;
+  const me = ctrl;
+  if (net.lc) {                                                                       // barra de tiro propia: corre acá, sin esperar a la red (se manda la carga al soltar)
+    const lc = net.lc; lc.v += lc.dir * CHARGE_SPEED * dt; if (lc.v >= 1) { lc.v = 1; lc.dir = -1; } if (lc.v <= 0) { lc.v = 0; lc.dir = 1; }
+    if (me._ss === 'shoot' || me._ss === 'dunk' || (performance.now() - lc.t > 450 && me._ss !== 'charge')) net.lc = null;
+    else { me.state = 'charge'; me.charge = lc.v; }
+  }
+}
+function netInputOf(h) {
+  const inp = inputOf(h), w = humanDir(h), P = inp.P || NO_PAD, kd = inp.kb ? KB.down : () => false;
+  const sprint = kd('sprint') || !!P.down.sprint, keyMove = kd('up') || kd('down') || kd('left') || kd('right');
+  return { t: 'I', wx: w ? r2(w.x) : 0, wz: w ? r2(w.z) : 0, m: w ? 1 : 0, sp: sprint ? 1 : 0, spA: r2(kd('sprint') ? 1 : (P.amt.sprint || 0)), jp: (kd('jump') || P.down.jump) ? 1 : 0, db: (kd('dribble') || P.down.dribble) ? 1 : 0, sh: P.down.shoot ? 1 : 0, an: (P.mag > 0 && !keyMove && !sprint) ? r2(P.mag) : 1 };
+}
+function guestNetTick(dt) {
+  net.inAcc += dt;
+  const now = performance.now();
+  if (net.inAcc >= 1 / 30) {
+    net.inAcc = 0;
+    const i = netInputOf(humans[1]), key = JSON.stringify(i);
+    if (key !== net.lastIn || now - net.lastInT > 250) { net.lastIn = key; net.lastInT = now; Online.sendGame(i, false); }
+  }
+  if (net.buf.count) {                                                                // aviso si el anfitrión deja de mandar
+    const stale = now - net.buf.lastRecv > 3500;
+    if (stale && !net.lost) { net.lost = true; say('Se cortó la señal del anfitrión… esperando.'); } else if (!stale && net.lost) { net.lost = false; say('¡Volvió la conexión!'); }
+  }
+}
+function guestSend(k, extra) { Online.sendGame({ t: 'A', k, ...extra }, true); }
+function guestAct(act, h) {                                                           // botones del invitado: se mandan al anfitrión
+  const me = h?.agent; if (!me) return;
+  if (act === 'camera') { cycleCamera(); return; }
+  if (act === 'shoot') { if (B.holder === me && me._ss === 'dribble' && !net.lc) net.lc = { v: 0, dir: 1, t: performance.now() }; guestSend('shoot'); }
+  else if (act === 'pass') { if (B.holder === me) guestSend('pass'); else if (h.dev === 'pad') guestSend('switch'); }
+  else if (act === 'steal') guestSend('steal');
+  else if (act === 'switch') guestSend('switch');
+  else if (act === 'dribble') guestSend('dribble');
+}
+function guestRelease(act, h) {
+  if (act !== 'shoot') return;
+  const me = h?.agent, ch = net.lc ? net.lc.v : (me?._ss === 'charge' ? me.charge : null);
+  net.lc = null; if (ch !== null) guestSend('release', { ch: r3(ch) });
+}
+function padGameGuest(P, dt, h) {
+  const E = P.pressed;
+  if (E.menu) { openPause(); return; }
+  if (E.camera) cycleCamera();
+  if (E.shoot) guestAct('shoot', h);
+  if (P.released.shoot) guestRelease('shoot', h);
+  if (E.pass) guestAct('pass', h);
+  if (E.switch) guestAct('switch', h);
+  if (E.steal) guestAct('steal', h);
+  if (E.dribble) guestAct('dribble', h);
+  if (P.flick && camMode !== 2 && B.holder === h.agent) guestAct('dribble', h);
+  if (P.raw[12]) camDist = clamp(camDist - 3 * dt, 2.2, 9); if (P.raw[13]) camDist = clamp(camDist + 3 * dt, 2.2, 9);
+}
+/** Fin del partido online (o abandono): se apaga todo lo de red y se frena el juego. */
+function stopOnlineMatch() { netRole = null; paused = true; dead = null; inbound = false; setFade(0); net.lc = null; net.buf.reset(); document.exitPointerLock?.(); }
+function onMatchEnded(info) {                            // llegó el resultado: XP para los dos y se frena la cancha
+  paused = true; document.exitPointerLock?.();
+  const mineA = netRole === 'host', ms = mineA ? info.sa : info.sb, os = mineA ? info.sb : info.sa;
+  queueXp(10 + (ms > os ? 25 : 0)); flushXp();
 }
 
 /* ============ Bucle principal ============ */
@@ -1682,7 +1881,7 @@ function buildMpHud() {
   if (!on) return;
   for (const h of humans) {
     const c = document.createElement('div'); c.className = 'mp-card'; c.style.setProperty('--c', h.color);
-    c.innerHTML = `<i>${h.name}</i><div class="mp-info"><b></b><div class="mp-bar"><u></u></div></div><em>${h.dev === 'kb' ? '⌨' : '🎮'}</em>`;
+    c.innerHTML = `<i>${h.name}</i><div class="mp-info"><b></b><div class="mp-bar"><u></u></div></div><em>${h.dev === 'kb' ? '⌨' : h.dev === 'net' ? '🌐' : '🎮'}</em>`;
     el.appendChild(c);
     /* la barra de tiro de este jugador: flota arriba de su cabeza (se mueve con él en pantalla) */
     const fb = document.createElement('div'); fb.className = 'pbar'; fb.style.setProperty('--c', h.color);
@@ -1733,6 +1932,7 @@ function updateHUD() {
   for (let i = humans.length; i < 4; i++) { passMarks[i].visible = false; rings[i].visible = false; }
 }
 function padGame(P, dt, h = humans[0]) {                // acciones del joystick (los mismos botones que NBA 2K, remapeables). h = a qué jugador pertenece este joystick
+  if (netRole === 'guest') { padGameGuest(P, dt, h); return; }
   const c = h.agent, E = P.pressed, holds = B.holder === c;
   if (E.menu) { openPause(); return; }
   if (E.camera) cycleCamera();
@@ -1774,16 +1974,18 @@ function frame() {
   const sep = humans.length > 1 && mode === 'match';        // varios jugadores: cada joystick lee solo a su dueño
   if (sep) for (const h of humans) if (h.dev === 'pad') { h.P = Pad.readPad(h.pad); h.connected = h.P.connected; }
   if (PM.isOpen()) { const j = Pad.joinPoll(); if (j >= 0) PM.onJoin?.(j); }
-  if (paused) { if (!PM.onPad(PS)) Pad.menuNav(PS); Pause.onPad(PS); }
+  if (paused || Pause.isOpen()) { if (!PM.onPad(PS)) Pad.menuNav(PS); Pause.onPad(PS); }
   else if (!sep) padGame(PS, dt);
   else for (const h of humans) if (h.dev === 'pad' && h.P?.connected && !paused) padGame(h.P, dt, h);
-  if (!paused) stepGame(dt);
-  updateRef(dt); arena.update(dt);
+  if (!paused) { if (netRole === 'guest') viewerStep(dt); else stepGame(dt); }
+  if (netRole !== 'guest') updateRef(dt);
+  arena.update(dt);
+  if (netRole === 'host' && !paused) hostNetTick(dt); else if (netRole === 'guest' && !paused) guestNetTick(dt);
   updateCamera(dt); updateScoreboard(); updateHUD();
   hoops.forEach(h => h.net(dt));
   if (!UI.isMainOpen() && !PM.isOpen() && !TS.isOpen() && !Online.isOpen()) renderer.render(scene, camera);   // con el menú previo abierto no hace falta dibujar la cancha de atrás
 }
-Online.init({ onBack: () => UI.showMain(), onNeedLogin: () => { signOut().then(() => UI.showAuth()); } });
+Online.init({ onBack: () => UI.showMain(), onNeedLogin: () => { signOut().then(() => UI.showAuth()); }, onMatchStart: (S, role) => startGame(S, role), onGame: onNetGame, onMatchStop: stopOnlineMatch, onMatchEnded });
 PM.init({ onPlay: startGame, onExit: exitToMain, onOnlineChange: p => Online.sendPick(p), onOnlineReady: r => Online.setReady(r), onOnlineStart: () => Online.hostStart(), onOnlineLeave: () => Online.leave() }); bindButtons(); loadSetup(PM.getSetup()); applyTeams(); setMode('match'); agents.forEach(a => a.active && pose(a, 0.016)); frame();
 UI.boot({ onTraining: () => openTrainSetup(false), onCasual: openCasual, onOnline: openOnline });
 addEventListener('resize', () => {

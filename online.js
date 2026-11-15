@@ -1,6 +1,6 @@
 import * as Auth from './auth.js';
 import * as PM from './prematch.js';
-import { TEAMS } from './teams.js';
+import { createLink } from './net.js';
 
 /* ============================================================================
    Casual online · salas públicas y privadas (Supabase: tabla `rooms` + Realtime)
@@ -13,8 +13,10 @@ import { TEAMS } from './teams.js';
 
    Canal en vivo de cada sala (Supabase Realtime, broadcast + presence):
      hello {role,name}   ·   pick {ab,kit,starters,bench,ctrl}   ·   ready {ready}   ·   start   ·   back
-   ETAPA 1 (esta): salas, lobby, sincronía del menú previo y el "todo listo".
-   ETAPA 2 (próxima): sincronizar el partido en vivo (movimientos, pelota, marcador) usando este mismo canal.
+   ETAPA 1: salas, lobby y sincronía del menú previo.
+   ETAPA 2 (acá): el partido en vivo. El ANFITRIÓN simula todo (jugadores, pelota, reglas, bots) y manda snapshots ~20/s;
+   el INVITADO manda sus controles y dibuja lo que recibe (main.js). El transporte es una conexión directa P2P (net.js)
+   y, si la red no la deja abrir, el mismo canal de Supabase (más lento pero siempre anda). Todo mensaje del juego pasa por sendGame().
    ========================================================================== */
 
 const $ = id => document.getElementById(id);
@@ -25,7 +27,6 @@ const KEY = 'basket3d_online';
 const YN = [['true', 'Sí'], ['false', 'No']];
 export const RULES = [
   ['court', 'Cancha', [['home', 'La del anfitrión'], ['away', 'La del invitado']]],
-  ['diff', 'Nivel de los bots', [['easy', 'Fácil'], ['hard', 'Difícil'], ['extreme', 'Extremo']]],
   ['qLen', 'Duración del cuarto', [['60', '1 min'], ['120', '2 min'], ['180', '3 min'], ['300', '5 min'], ['480', '8 min']]],
   ['shotClock', 'Reloj de 24 segundos', YN],
   ['fatigue', 'Cansancio', YN],
@@ -89,7 +90,7 @@ function back() {
    Pantallas del lobby
    ------------------------------------------------------------------------- */
 const ruleLabel = (k, v) => (RULES.find(r => r[0] === k)?.[2].find(([x]) => x === String(v)) || [0, String(v)])[1];
-const rulesLine = s => `${ruleLabel('qLen', s.qLen)} × 4 · ${ruleLabel('diff', s.diff)} · 24 s ${s.shotClock === false || s.shotClock === 'false' ? 'no' : 'sí'}`;
+const rulesLine = s => `${ruleLabel('qLen', s.qLen)} × 4 · 24 s ${s.shotClock === false || s.shotClock === 'false' ? 'no' : 'sí'}`;
 
 function render() {
   const msgHTML = msg ? `<p class="ol-msg ${msgOk ? 'ok' : 'err'}">${esc(msg)}</p>` : '';
@@ -218,9 +219,11 @@ async function enter(room, role) {
   sess = {
     room, role, myId: me.id, myName: me.username, oppName: role === 'host' ? room.guest_name : room.host_name, oppOnline: false, everOpp: false,
     meReady: false, oppReady: false, ch: null, hb: 0, poll: 0, gone: 0, started: false, lastPick: null, pickT: 0,
+    link: null, linkState: 'relay', inMatch: false, init: null, lostT: 0,
   };
   const s = room.settings || {};
-  PM.openWizard({ step: 1, online: { role, code: room.code, name: room.name, pub: room.is_public, settings: { court: s.court || 'home', diff: s.diff || 'hard', qLen: +s.qLen || 180, shotClock: s.shotClock !== false, fatigue: s.fatigue !== false, autoSubs: s.autoSubs !== false }, hostName: role === 'host' ? me.username : room.host_name, guestName: role === 'host' ? room.guest_name : me.username, meReady: false, oppReady: false, oppOnline: false } });
+  sess.init = { role, code: room.code, name: room.name, pub: room.is_public, settings: { court: s.court || 'home', diff: s.diff || 'hard', qLen: +s.qLen || 180, shotClock: s.shotClock !== false, fatigue: s.fatigue !== false, autoSubs: s.autoSubs !== false }, hostName: role === 'host' ? me.username : room.host_name, guestName: role === 'host' ? room.guest_name : me.username, meReady: false, oppReady: false, oppOnline: false };
+  PM.openWizard({ step: 1, online: { ...sess.init } });
   syncState();
   try {
     const c = await Auth.getClient();
@@ -259,11 +262,15 @@ function onPresence() {
   if (opp) { sess.oppName = opp.name || sess.oppName; sess.everOpp = true; clearTimeout(sess.gone); sess.gone = 0; }
   else if (was) {                                                     // se fue (cerró la pestaña, se le cayó internet o salió)
     sess.oppReady = false;
-    PM.onlineToast?.(sess.role === 'host' ? 'El invitado salió de la sala.' : 'El anfitrión se desconectó…');
+    if (!sess.inMatch) PM.onlineToast?.(sess.role === 'host' ? 'El invitado salió de la sala.' : 'El anfitrión se desconectó…');
     if (sess.role === 'host') sess.oppName = null;
-    if (sess.role === 'guest') { clearTimeout(sess.gone); sess.gone = setTimeout(() => { if (sess && !sess.oppOnline) leave('El anfitrión cerró la sala.'); }, 12000); }
+    if (sess.role === 'guest' && !sess.inMatch) { clearTimeout(sess.gone); sess.gone = setTimeout(() => { if (sess && !sess.oppOnline && !sess.inMatch) leave('El anfitrión cerró la sala.'); }, 12000); }
   }
-  if (opp && !was) send({ t: 'hello' });                               // el que llegó recién necesita mi elección
+  if (opp && !was) { send({ t: 'hello' }); if (sess.role === 'host') { dropLink(); startLink(); } }      // el que llegó recién necesita mi elección; el anfitrión abre la conexión directa
+  if (!opp && was) dropLink();
+  if (!opp && was && sess.inMatch) {                                    // se cayó en pleno partido: si no vuelve en 10 s, se corta
+    clearTimeout(sess.lostT); sess.lostT = setTimeout(() => { if (sess && sess.inMatch && !sess.oppOnline) opponentLeftMatch(sess.role === 'guest' ? 'Se perdió la conexión con el anfitrión.' : 'Se perdió la conexión con el invitado.'); }, 10000);
+  } else if (opp && sess.lostT) { clearTimeout(sess.lostT); sess.lostT = 0; }
   syncState();
 }
 /** Respaldo por si Realtime falla: mirar la fila de la sala. */
@@ -284,11 +291,42 @@ async function pollRoom() {
 function onMsg(m) {
   if (!sess || !m) return;
   if (m.role === sess.role) return;
-  if (m.t === 'hello') { sendPickNow(); send({ t: 'ready', ready: sess.meReady }); }
+  if (m.t === 'rtc') { if (!sess.link && sess.role === 'guest') startLink(); sess.link?.signal(m); }
+  else if (m.t === 'g') handleGame(m.m);
+  else if (m.t === 'hello') { sendPickNow(); send({ t: 'ready', ready: sess.meReady }); }
   else if (m.t === 'pick') { PM.applyOpponent(m.pick); }
   else if (m.t === 'ready') { sess.oppReady = !!m.ready; syncState(); }
-  else if (m.t === 'start') { showStart(); }
-  else if (m.t === 'back') { hideStart(); sess.meReady = false; sess.oppReady = false; sess.started = false; syncState(); PM.onlineToast?.('El anfitrión volvió a la sala.'); }
+}
+
+/* ---------------------------------------------------------------------------
+   Transporte del juego: P2P si se pudo abrir, si no Supabase
+   ------------------------------------------------------------------------- */
+function startLink() {
+  if (!sess || sess.link) return;
+  const l = createLink({ initiator: sess.role === 'host', signal: m => send(m), onMessage: handleGame, onState: st => { if (sess) { sess.linkState = st; hooks.onLinkState?.(st); } } });
+  sess.link = l; if (sess.role === 'host') l.start();
+}
+function dropLink() { if (!sess?.link) return; sess.link.close(); sess.link = null; sess.linkState = 'relay'; }
+export const linkState = () => sess?.linkState || 'relay';
+/** Manda un mensaje del juego. `reliable` = ordenado y garantizado (acciones, eventos); si no, puede perderse (snapshots, inputs). */
+export function sendGame(msg, reliable = false) {
+  if (!sess) return;
+  if (sess.link?.send(msg, reliable)) return;
+  send({ t: 'g', m: msg });
+}
+function handleGame(m) {
+  if (!sess || !m) return;
+  if (m.t === 'start') { if (sess.role === 'guest' && m.setup) { sess.inMatch = true; sess.lostT = 0; hooks.onMatchStart?.(m.setup, 'guest'); } }
+  else if (m.t === 'over') { if (sess.inMatch) showResult(m.info); }
+  else if (m.t === 'quit') { if (sess.inMatch || !modal.hidden) opponentLeftMatch(sess.role === 'guest' ? 'El anfitrión abandonó la partida.' : 'El invitado abandonó la partida.'); }
+  else hooks.onGame?.(m);
+}
+function opponentLeftMatch(why) {
+  if (!sess) return;
+  hooks.onMatchStop?.(); hideModal(); sess.inMatch = false; sess.meReady = false; sess.oppReady = false;
+  if (sess.role === 'guest') { leave(why); return; }                  // si se va el anfitrión, la sala se cierra
+  sess.oppName = null; sess.oppOnline = false; dropLink();
+  PM.resumeOnline(why); syncState();
 }
 
 /* ---- lo que manda prematch.js ---- */
@@ -303,39 +341,54 @@ export function setReady(v) { if (!sess) return; sess.meReady = !!v; send({ t: '
 function toggleReady() { if (!sess) return; if (!sess.oppOnline && !sess.meReady) { /* igual podés marcar listo */ } setReady(!sess.meReady); }
 
 export async function hostStart() {
-  if (!sess || sess.role !== 'host') return;
+  if (!sess || sess.role !== 'host' || sess.inMatch) return;
   if (!sess.oppOnline || !sess.meReady || !sess.oppReady) return PM.onlineToast?.('Faltan los dos: tienen que estar presentes y listos.');
+  const setup = PM.getSetup();
   try { await (await Auth.getClient()).rpc('set_room_status', { p_id: sess.room.id, p_status: 'playing' }); } catch { /* nada */ }
-  send({ t: 'start' }); showStart();
-}
-async function backToRoom() {
   if (!sess) return;
-  hideStart(); sess.meReady = false; sess.oppReady = false; sess.started = false; syncState();
-  if (sess.role === 'host') { try { await (await Auth.getClient()).rpc('set_room_status', { p_id: sess.room.id, p_status: 'waiting' }); } catch { /* nada */ } send({ t: 'back' }); }
+  sess.inMatch = true; sess.lostT = 0;
+  sendGame({ t: 'start', setup }, true);
+  hooks.onMatchStart?.(setup, 'host');
 }
 
-/** "Todo listo": los dos están en la sala con equipos, camisetas y alineaciones sincronizados. */
-function showStart() {
+/** Final del partido (lo llama main.js en el anfitrión): avisa al invitado y muestra el resultado a los dos. */
+export function matchOver(info) { if (!sess || !sess.inMatch) return; sendGame({ t: 'over', info }, true); showResult(info); }
+function showResult(info) {
   if (!sess) return;
-  sess.started = true;
-  const S = PM.getSetup(), A = S.teamA, B = S.teamB, me = sess.role === 'host' ? 'A' : 'B';
-  const nm = sess.role === 'host' ? [sess.myName, sess.oppName] : [sess.oppName, sess.myName];
+  hooks.onMatchEnded?.(info);
+  const A = info.ta, B = info.tb, mineA = sess.role === 'host', ms = mineA ? info.sa : info.sb, os = mineA ? info.sb : info.sa;
+  const res = ms === os ? 'EMPATE' : ms > os ? '¡GANASTE!' : 'PERDISTE';
   modal.innerHTML = `<div class="ol-sheet">
-    <small>SALA ${esc(sess.room.code)} · ${esc(sess.room.name)}</small><h2>¡TODO LISTO!</h2>
-    <div class="ol-vs"><div><img src="${esc(A.logo)}" alt=""><b>${esc(A.name)}</b><em>${esc(nm[0] || 'Anfitrión')}${me === 'A' ? ' (vos)' : ''}</em></div><strong>VS</strong><div><img src="${esc(B.logo)}" alt=""><b>${esc(B.name)}</b><em>${esc(nm[1] || 'Invitado')}${me === 'B' ? ' (vos)' : ''}</em></div></div>
-    <p>Reglas: ${esc(rulesLine(S.online?.settings || {}))} · Cancha: ${esc(S.courtTeam.name)}</p>
-    <p class="ol-note"><b>Etapa 1 completa:</b> la sala, los equipos, camisetas y alineaciones ya están sincronizados entre los dos. Falta la <b>etapa 2</b>: que el partido en vivo (movimientos, pelota y marcador) corra sincronizado. Por eso todavía no arranca la cancha.</p>
-    <button type="button" class="ol-btn play" data-ol="backroom">${sess.role === 'host' ? 'VOLVER A LA SALA' : 'OK'}</button></div>`;
-  modal.hidden = false;
+    <small>SALA ${esc(sess.room.code)} · FINAL</small><h2>${res}</h2>
+    <div class="ol-vs"><div><img src="${esc(A.logo)}" alt=""><b>${esc(A.name)}</b><em>${esc((sess.role === 'host' ? sess.myName : sess.oppName) || 'Anfitrión')}${mineA ? ' (vos)' : ''}</em></div><strong>${info.sa} – ${info.sb}</strong><div><img src="${esc(B.logo)}" alt=""><b>${esc(B.name)}</b><em>${esc((sess.role === 'guest' ? sess.myName : sess.oppName) || 'Invitado')}${!mineA ? ' (vos)' : ''}</em></div></div>
+    <button type="button" class="ol-btn play" data-ol="backroom">VOLVER A LA SALA</button></div>`;
+  modal.hidden = false; sess.result = info;
 }
-function hideStart() { if (modal) { modal.hidden = true; modal.innerHTML = ''; } }
+function hideModal() { if (modal) { modal.hidden = true; modal.innerHTML = ''; } }
+/** Después del partido: los dos vuelven al último paso del menú previo (revancha con los mismos equipos o cambiar lo que quieran). */
+async function backToRoom() {
+  if (!sess) return;
+  const r = sess.result; hideModal(); sess.result = null;
+  hooks.onMatchStop?.(); sess.inMatch = false; sess.meReady = false; sess.oppReady = false; send({ t: 'ready', ready: false });
+  PM.resumeOnline(r ? `Final: ${r.ta.ab} ${r.sa} – ${r.sb} ${r.tb.ab}` : '');
+  syncState();
+  if (sess.role === 'host') { try { await (await Auth.getClient()).rpc('set_room_status', { p_id: sess.room.id, p_status: 'waiting' }); } catch { /* nada */ } }
+}
+/** Abandonar el partido en curso (menú de pausa). */
+export function quitMatch() {
+  if (!sess) return;
+  sendGame({ t: 'quit' }, true); send({ t: 'g', m: { t: 'quit' } });
+  leave(null);
+}
 
 /** Salir de la sala (el anfitrión la cierra; el invitado la deja libre). `why` = aviso para mostrar en el lobby. */
 export async function leave(why = null) {
   const s = sess; if (!s) return;
+  if (s.inMatch) hooks.onMatchStop?.();
   sess = null;
-  clearInterval(s.hb); clearInterval(s.poll); clearTimeout(s.gone); clearTimeout(s.pickT);
-  hideStart();
+  clearInterval(s.hb); clearInterval(s.poll); clearTimeout(s.gone); clearTimeout(s.pickT); clearTimeout(s.lostT);
+  try { s.link?.close(); } catch { /* nada */ }
+  hideModal();
   try { s.ch?.untrack?.(); s.ch?.unsubscribe(); } catch { /* nada */ }
   try { (await Auth.getClient()).rpc('leave_room', { p_id: s.room.id }); } catch { /* nada */ }
   PM.closeWizard();

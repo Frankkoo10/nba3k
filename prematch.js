@@ -112,8 +112,8 @@ export function getSetup() {
     const [h, g] = host ? [me, op] : [op, me], mine = S.slots.find(s => s.on) || S.slots[0];
     return {
       online: { role: O.role, code: O.code, settings: { ...O.settings } },
-      players: 1, humans: [{ dev: mine.dev, pad: mine.pad, team: host ? 0 : 1 }], teamA: h.team, teamB: g.team, kitA: h.kit, kitB: g.kit, lineupA: h.lineup, lineupB: g.lineup,
-      qLen: O.settings.qLen, diff: O.settings.diff, shotClock: O.settings.shotClock, fatigue: O.settings.fatigue, autoSubs: O.settings.autoSubs, cam: S.cam, camHeight: S.camHeight, style: { ...S.style }, ctrlSlot: h.ctrl,
+      players: 2, humans: [{ dev: mine.dev, pad: mine.pad, team: host ? 0 : 1 }], teamA: h.team, teamB: g.team, kitA: h.kit, kitB: g.kit, lineupA: h.lineup, lineupB: g.lineup,
+      qLen: O.settings.qLen, diff: O.settings.diff, shotClock: O.settings.shotClock, fatigue: O.settings.fatigue, autoSubs: O.settings.autoSubs, cam: S.cam, camHeight: S.camHeight, style: host ? { ...S.style } : { ...(O.oppStyle || S.style) }, styleB: host ? { ...(O.oppStyle || S.style) } : { ...S.style }, ctrlSlot: h.ctrl, ctrlSlotB: g.ctrl,
       court: O.settings.court, courtTeam: O.settings.court === 'away' ? g.team : h.team,
     };
   }
@@ -140,7 +140,7 @@ const OPT = {
   cam: [['0', '2K'], ['1', 'TV'], ['2', 'Libre']],
   camHeight: [['-2', 'Más baja'], ['-1', 'Baja'], ['0', 'Normal'], ['1', 'Alta'], ['2', 'Más alta']],
 };
-const MATCH_ROWS = [
+const MATCH_ALL = [
   ['court', 'Cancha', 'Estadio del local o del visitante.'],
   ['diff', 'Dificultad', 'Cómo juega el rival: velocidad, puntería, presión, robos y tapones.'],
   ['qLen', 'Duración del cuarto', 'Cuatro cuartos. Si hay empate, tiempo suplementario.'],
@@ -150,6 +150,8 @@ const MATCH_ROWS = [
   ['cam', 'Cámara inicial', 'Después la cambiás con la tecla C.'],
   ['camHeight', 'Altura de cámara 2K', 'Ajustá el ángulo vertical: más baja o más alta.'],
 ];
+/** Filas del paso Partido. En una sala se saca el nivel de los bots: los dos equipos tienen un humano y el nivel no cambia nada. */
+const matchRows = () => (S.online ? MATCH_ALL.filter(r => r[0] !== 'diff') : MATCH_ALL);
 const STYLE_ROWS = [
   ['pace', 'Ritmo', [['slow', 'Lento'], ['normal', 'Normal'], ['fast', 'Rápido']], 'Qué tan rápido atacan tus compañeros.'],
   ['shot', 'Tiro', [['balanced', 'Equilibrado'], ['threes', 'Triples'], ['inside', 'Cerca del aro']], 'Desde dónde buscan tirar.'],
@@ -466,8 +468,8 @@ export function onPad(P) {                                        // devuelve tr
     if (n.y && r) { if (padZone === 0) showCard(r.starters[padI[0]]); else if (padZone === 1 && r.bench[padI[1]]) showCard(r.bench[padI[1]]); }
     if (n.x && padZone === 0) ACT.star({ dataset: { i: padI[0] } });
   } else {
-    padRow = wrapI(padRow, v, MATCH_ROWS.length);
-    if (h) stepOpt(MATCH_ROWS[padRow][0], h);
+    padRow = wrapI(padRow, v, matchRows().length);
+    if (h) stepOpt(matchRows()[padRow][0], h);
     if (n.ok) ACT.next();                                                                   // ✕ en el último paso = ¡JUGAR!
   }
   padMark();
@@ -796,7 +798,7 @@ function renderOnline() {
 }
 function renderOpts() {
   const el = $('pmOpts'); if (!el) return; queueMicrotask(padMark);
-  el.innerHTML = MATCH_ROWS.map(([k, label, desc]) => (S.online && LOCKED.has(k)
+  el.innerHTML = matchRows().map(([k, label, desc]) => (S.online && LOCKED.has(k)
     ? `<div class="fc-opt locked"><div class="o-t"><b>${label}</b><small>${desc}</small></div><div class="o-v lock"><span class="${k === 'court' ? 'wide' : ''}">${labelOf(k)}</span><em>🔒 ANFITRIÓN</em></div></div>`
     : `<div class="fc-opt"><div class="o-t"><b>${label}</b><small>${desc}</small></div><div class="o-v"><button type="button" data-act="optstep" data-key="${k}" data-d="-1" aria-label="Anterior">‹</button><span class="${k === 'court' ? 'wide' : ''}">${labelOf(k)}</span><button type="button" data-act="optstep" data-key="${k}" data-d="1" aria-label="Siguiente">›</button></div></div>`)).join('');
 }
@@ -814,7 +816,7 @@ function renderSummary() {
   };
   const style = STYLE_ROWS.map(([k]) => labelOf('style.' + k)).join(' · ');
   el.innerHTML = `<div class="fc-sumvs">${side('A')}<strong>VS</strong>${side('B')}</div>
-    <ul><li><span>Cancha</span><b>${courtFor(courtTeamNow()).arena}</b></li>${S.online ? '' : `<li><span>Jugadores</span><b>${S.players}</b></li>`}<li><span>Dificultad</span><b>${labelOf('diff')}</b></li><li><span>Cuartos</span><b>4 × ${labelOf('qLen')}</b></li><li><span>Cámara</span><b>${labelOf('cam')} · ${labelOf('camHeight')}</b></li>
+    <ul><li><span>Cancha</span><b>${courtFor(courtTeamNow()).arena}</b></li>${S.online ? '' : `<li><span>Jugadores</span><b>${S.players}</b></li>`}${S.online ? '' : `<li><span>Dificultad</span><b>${labelOf('diff')}</b></li>`}<li><span>Cuartos</span><b>4 × ${labelOf('qLen')}</b></li><li><span>Cámara</span><b>${labelOf('cam')} · ${labelOf('camHeight')}</b></li>
     <li><span>24 s · Cansancio · Cambios</span><b>${[S.shotClock, S.fatigue, S.autoSubs].map(v => (v ? 'Sí' : 'No')).join(' · ')}</b></li><li><span>Tu estilo</span><b>${style}</b></li></ul>`;
 }
 
@@ -858,7 +860,7 @@ const pkey = p => String(p.id ?? p.name);
 /** Lo que el rival necesita saber de mi elección (se manda por el canal de la sala). */
 export function getMyPick() {
   const r = S.rosA; if (!S.online || !r) return null;
-  return { ab: S.teamA.ab, kit: S.kitA, starters: r.starters.map(pkey), bench: r.bench.map(pkey), ctrl: S.ctrlSlot };
+  return { ab: S.teamA.ab, kit: S.kitA, starters: r.starters.map(pkey), bench: r.bench.map(pkey), ctrl: S.ctrlSlot, style: { ...S.style } };
 }
 function emitPick() {
   if (!S.online) return;
@@ -876,7 +878,7 @@ function arrange(c, pk) {                                          // ordena un 
 export function applyOpponent(pk) {
   if (!S.online || !pk) return;
   const t = teamByAb(pk.ab); if (!t) return;
-  const O = S.online; O.oppPicked = true; O.oppCtrl = +pk.ctrl || 0;
+  const O = S.online; O.oppPicked = true; O.oppCtrl = +pk.ctrl || 0; O.oppStyle = pk.style ? { ...pk.style } : null;
   S.teamB = t; if (pk.kit) S.kitB = pk.kit;
   const changed = fixClash();
   root.style.setProperty('--tcA', tint(S.teamA)); root.style.setProperty('--tcB', tint(S.teamB));
@@ -900,6 +902,17 @@ export function onlineUpdate(patch) {
   if (S.step === 1 && before !== `${S.online.oppName}|${S.online.oppOnline}`) renderSide('B');
 }
 export const onlineToast = t => toast(t);
+/** Dispositivo con el que juega este jugador (teclado y mouse o un joystick). */
+export function localDevice() { pruneSlots(); const m = S.slots.find(x => x.on) || S.slots[0]; return { dev: m.dev, pad: m.pad }; }
+/** Al empezar el partido online se esconde el menú SIN salir de la sala (así después se vuelve al mismo lugar). */
+export function hideForMatch() { open_ = false; stage?.stop?.(); closeModal(); if (root) root.hidden = true; }
+/** Después del partido: vuelve al último paso de la sala, con el resultado arriba. */
+export function resumeOnline(banner = '') {
+  if (!S.online) return false;
+  Pad.resetJoin(); justJoined = false; open_ = true; S.leaveAsk = false; hoverI = -1;
+  S.step = LAST; S.banner = banner; S.selStarter = null; padRow = 0; root.hidden = false; S.online.meReady = false; S.online.oppReady = false;
+  render(); return true;
+}
 function askLeave() {
   S.leaveAsk = true;
   const m = $('pmModal'); if (!m) return;

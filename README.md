@@ -1,4 +1,4 @@
-# Basket 3D — v27
+# Basket 3D — v28
 
 Basket en tercera persona con Three.js: cancha NBA a escala real, física realista, menú con los 30 equipos (con escudos), marcador estilo NBA TV, tribuna estilo Chase Center (Warriors), árbitro y un rival (bot) quieto.
 
@@ -236,6 +236,29 @@ Ahora el **Partido casual** se puede jugar de a **1, 2, 3 o 4 personas en una so
 5. Al crear o entrar se abre el **mismo menú previo del casual** (Equipos → Camisetas → Tu equipo → Partido), con estas diferencias: cada uno elige **solo su** equipo, camiseta y alineación (el rival se ve en vivo y no se toca); el paso Partido muestra las reglas con 🔒 y el panel de la sala; cada uno marca **Estoy listo** y el anfitrión toca **Empezar partido**. Si las camisetas chocan, la cambia el invitado. Cámara y altura de cámara son personales.
 6. Salir de la sala (Esc en el primer paso) pregunta antes: si salís de anfitrión se cierra la sala; de invitado queda libre.
 
-**Estado:** esta es la **etapa 1** (salas, lobby, menú sincronizado en vivo y "todo listo"). Todavía **no corre el partido sincronizado**: al empezar aparece una pantalla de "¡Todo listo!" con los dos equipos. `PM.getSetup()` ya devuelve el partido armado para online (anfitrión = Local, invitado = Visitante) y el canal `sala:<id>` ya existe, listo para la **etapa 2** (mandar movimientos, pelota y marcador).
+**Estado (v27):** era la **etapa 1** (salas, lobby, menú sincronizado en vivo y "todo listo"). Todavía **no corre el partido sincronizado**: al empezar aparece una pantalla de "¡Todo listo!" con los dos equipos. `PM.getSetup()` ya devuelve el partido armado para online (anfitrión = Local, invitado = Visitante) y el canal `sala:<id>` ya existe, listo para la **etapa 2** (mandar movimientos, pelota y marcador).
 
 **Archivos:** `online.js` (lobby, salas, canal en vivo) · `prematch.js` (modo online del menú previo) · `supabase/004_salas_online.sql` · `ui.js`/`main.js`/`index.html`/`gamepad.js`/`style.css` (conexiones y estilos).
+
+
+## Novedades v28 — el partido online ya se juega (etapa 2)
+
+No hay que correr nada nuevo en Supabase (sigue siendo el `004_salas_online.sql`). Cuando los dos marcan "Estoy listo" y el anfitrión toca **Empezar partido**, arranca la cancha para los dos.
+
+**Cómo funciona**
+- **El anfitrión simula todo** (los 10 jugadores, la pelota, faltas, tiros libres, árbitro, bots). Es el mismo motor del casual, con el invitado como "segundo humano" cuyos controles llegan por la red. Así las reglas son idénticas y nadie puede hacer trampa desde su lado.
+- **El invitado no simula**: manda sus controles (30 por segundo, solo si cambian) y sus acciones (tirar, pasar, robar, cambiar, cruce), y dibuja lo que recibe del anfitrión (20 snapshots por segundo, ~2,2 KB cada uno) interpolando ~110 ms en el pasado para que se vea fluido.
+- **Barra de tiro del invitado**: corre en su propia pantalla sin esperar a la red y al soltar manda su valor, así el tiro perfecto no depende del ping.
+- **Conexión**: primero intenta **directa entre los dos (WebRTC, `net.js`)**: menos demora y no gasta mensajes de Supabase. Si la red no lo permite, usa el canal de Supabase automáticamente (más lento, pero siempre anda). `Online.linkState()` dice cuál se está usando.
+- Cada uno ve la cancha desde su jugador (cámara 2K o TV; no hay cámara libre online). Cada equipo usa el estilo de juego que armó su dueño.
+- **Menú de pausa online**: abre el menú pero el partido **no se frena** (el rival sigue jugando). "Abandonar partido" avisa al rival; el anfitrión vuelve a la sala y, si se va el anfitrión, la sala se cierra.
+- Al terminar el partido aparece el resultado para los dos (XP: 10 por jugar + 25 por ganar) y "Volver a la sala" lleva al último paso para pedir **revancha** o cambiar equipos.
+- Si uno se desconecta más de 10 segundos en pleno partido, se corta y el otro vuelve a la sala.
+
+**Límites a tener en cuenta**
+- El partido corre en la PC del anfitrión: si su pestaña queda en segundo plano el navegador la frena y se frena para los dos. Conviene que el anfitrión sea quien tenga mejor internet/PC.
+- El invitado ve el juego con la demora de la conexión (~100–200 ms con P2P, algo más por Supabase). Lo del tiro está compensado; el movimiento y los pases tienen esa demora.
+- Por Supabase (sin P2P) un partido manda ~45 mensajes por segundo; el plan gratis incluye 2 millones de mensajes al mes (≈ 11 horas de partido). Con P2P casi no gasta.
+- "Nivel de los bots" no aparece online: los dos equipos tienen un humano y no cambia nada.
+
+**Archivos nuevos/tocados:** `net.js` (conexión directa + respaldo), `netsync.js` (buffer de snapshots e interpolación), `online.js` (arranque/fin/abandono del partido), `main.js` (sección "Partido online": snapshots del anfitrión, visor del invitado, controles por red), `prematch.js` (`hideForMatch`, `resumeOnline`, estilo por equipo).
