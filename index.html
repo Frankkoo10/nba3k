@@ -7,8 +7,40 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,700;0,800;1,700;1,800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="career/career.css">
+  <link rel="stylesheet" href="ultimate/ut.css">
+  <!-- v53: se bajan y compilan en paralelo (sin ejecutarse) mientras suena la cinemática -->
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js">
+  <link rel="modulepreload" href="main.js">
 </head>
 <body>
+  <!-- ===== Pantalla de carga + cinemática de inicio (las manejan boot.js e intro.js) ===== -->
+  <section id="boot">
+    <div class="bt-stage" id="btStage"><canvas id="btCv"></canvas></div>
+    <div class="bt-vig"></div>
+    <div class="bt-dim" id="btDim"></div>
+    <div class="bt-flash" id="btFlash"></div>
+    <div class="bt-title" id="btTitle">
+      <svg class="bt-crown" viewBox="0 0 120 84" aria-hidden="true">
+        <defs><linearGradient id="btCg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff2b0"/><stop offset=".5" stop-color="#ffc73a"/><stop offset="1" stop-color="#c98410"/></linearGradient></defs>
+        <path d="M10 68 L2 22 L33 45 L60 8 L87 45 L118 22 L110 68 Z" fill="url(#btCg)"/>
+        <rect x="10" y="68" width="100" height="12" rx="4" fill="url(#btCg)"/>
+        <circle cx="2" cy="22" r="6" fill="#fffbe0"/><circle cx="60" cy="8" r="6.5" fill="#fffbe0"/><circle cx="118" cy="22" r="6" fill="#fffbe0"/>
+      </svg>
+      <div class="bt-name"><span>MORENO</span> <span>GAMES</span></div>
+      <div class="bt-sub">BASKET 3D · COURTSIDE 26</div>
+    </div>
+    <div class="bt-fade" id="btFade"></div>
+    <div class="bt-box">
+      <div class="bt-load">
+        <div class="bt-bar"><div id="bootFill"></div></div>
+        <div class="bt-row"><span id="bootTxt">Preparando…</span><b id="bootPct">0%</b></div>
+      </div>
+      <div class="bt-enter" id="bootEnter">PRESIONÁ CUALQUIER TECLA PARA JUGAR</div>
+      <button type="button" id="bootSkip" hidden>Entrar igual</button>
+    </div>
+    <div class="bt-credit">MORENO GAMES</div>
+  </section>
   <main class="hud">
     <div>
       <p class="eyebrow" id="modeLabel">ENTRENAMIENTO</p>
@@ -105,6 +137,7 @@
     <div class="st-box">
       <h2>CONFIGURACIÓN</h2>
       <label class="st-row"><span>Sensibilidad del mouse <b id="setSensV">1.0×</b></span><input id="setSens" type="range" min="0.3" max="2.5" step="0.1" value="1"></label>
+      <label class="st-row"><span>Volumen del público <b id="setCrowdV">80%</b></span><input id="setCrowd" type="range" min="0" max="1" step="0.05" value="0.8"></label>
       <div class="st-row st-pad"><span>Joystick <b id="padName">no detectado</b></span>
         <label class="st-row"><span>Zona muerta del stick <b id="setDeadV">0.22</b></span><input id="setDead" type="range" min="0.05" max="0.4" step="0.01" value="0.22"></label>
         <label class="st-check"><input id="setHints" type="checkbox" checked><span>Mostrar en pantalla qué hace cada botón (cambia según la jugada)</span></label>
@@ -129,9 +162,20 @@
 
   <!-- ===== Controles (lo arma controls.js) ===== -->
   <section id="controls" hidden></section>
+  <!-- ===== Modo carrera DT (lo arma career/ui.js) ===== -->
+  <section id="cr" hidden></section>
+  <!-- ===== Ultimate Team (lo arma ultimate/ut.js) ===== -->
+  <section id="ut" hidden></section>
   <div id="padHud" hidden></div>
   <div id="mpHud" hidden></div>
   <div id="mpBars" hidden></div>
-  <script type="module" src="main.js"></script>
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+    } }
+  </script>
+  <script type="module" src="boot.js"></script>
+  <!-- v53: main.js lo arranca boot.js cuando la cinemática llega al título (así el armado del juego no frena la animación) -->
 </body>
 </html>

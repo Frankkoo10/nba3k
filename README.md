@@ -1,4 +1,4 @@
-# Basket 3D — v34
+# Basket 3D — v61
 
 Basket en tercera persona con Three.js: cancha NBA a escala real, física realista, menú con los 30 equipos (con escudos), marcador estilo NBA TV, tribuna estilo Chase Center (Warriors), árbitro y un rival (bot) quieto.
 
@@ -373,3 +373,199 @@ Cada jugador toma del dato de la base su **altura, peso, piel, pelo, barba y acc
 **Ojo:** no pude abrirlo en un navegador; verifiqué la sintaxis, la tabla de looks y la curva del stick con scripts. Los rasgos son de memoria + búsqueda y pueden estar desactualizados.
 
 **Joystick en los menús (v35, `gamepad.js` → `menuNav`)**: antes el cursor saltaba al elemento más cercano en cualquier dirección (como un mouse). Ahora es por **filas**: ← → solo se mueven dentro de la fila, ↑ ↓ pasan a la fila de arriba o abajo y caen en el elemento más alineado, sin saltos en diagonal. Con el stick cuenta solo el eje dominante (empujar medio en diagonal ya no mueve en dos sentidos). Los pasos del menú previo al partido ya tenían su propia navegación y no cambian.
+
+**Pelota con modelo 3D (v37, `assets/ball.glb`)**: la pelota ahora es una NBA Wilson (logos, costuras y relieve de cuero) en vez de la esfera con textura dibujada. Es un GLB de 768 triángulos con texturas de 1024 px (2,2 MB). Viene centrada y con radio 0,12 m, así que la física, el giro y las manos no cambian. Si el archivo no carga, el juego sigue con la pelota básica. `index.html` ahora tiene un `importmap` para poder usar `GLTFLoader` (también te va a servir para los modelos de jugadores). Para cambiar la pelota, reemplazá `assets/ball.glb` (centrada en el origen y radio 0,12).
+
+**Cancha 3D del Chase Center (v38, `assets/gsw_court.glb`)**: cuando jugás con la cancha de los Warriors, el piso es el modelo 3D (parquet, líneas azules, logo gigante, "Golden State Warriors" en los fondos, Oracle Arena, NBA) y los aros tienen los soportes acolchados con los logos (Spalding, NBA, warriors.com). La tribuna, las pantallas LED, los banners y el tablero colgante siguen igual. Pesa 400 KB (texturas bajadas de 4096 a 1024).
+- El modelo está calibrado al juego: líneas de fondo en ±14,325 m y de banda en ±7,62 m, y aros en ±12,75 m, así que **la física no cambió**. El aro con su red animada sigue siendo el del juego (el del modelo se sacó para no duplicarlo).
+- Las otras 29 canchas siguen usando la cancha generada por código. Si el GLB no carga, también.
+- Para otra cancha con modelo: agregá `model: 'assets/lo-que-sea.glb'` en su bloque de `courts.js` (piso en `y = 0`, centrado, con nodo `piso`; el resto se muestra tal cual).
+
+
+## Novedades v39 — personaje 3D con esqueleto (Stephen Curry) usando las animaciones del juego
+**Qué hay:** `assets/curry.glb` (Curry con camiseta de los Warriors, cara y 140 huesos) y `rig-glb.js`. Cuando el jugador en cancha se llama **Stephen Curry** (así figura en `players.name` de Supabase), se ve el modelo 3D en vez del cuerpo procedural. El resto de los jugadores no cambia.
+
+**Cómo funciona (y por qué las animaciones andan solas):** el GLB no trae ninguna animación, así que no hizo falta crear ninguna. El cuerpo procedural de `rig.js` sigue vivo pero invisible, como "motor de animación": todas las poses del juego (correr, driblear, tirar, mates, bandejas, tapones, pases con lujo, tiros libres, celebraciones) se calculan igual que siempre, y `rig-glb.js` copia cada cuadro la orientación de torso, cabeza, brazos y piernas al hueso equivalente del GLB. Por eso la pelota en la mano, la IA, la física y el online no se tocaron: el invitado online también ve el modelo, porque lo mueve la misma pose que ya viaja por la red.
+- **IK de brazos y piernas:** las proporciones del GLB son distintas (brazos más cortos, piernas más largas). Las manos se llevan a las manos del cuerpo procedural (para que la pelota quede en la mano) y los pies a sus pies (apoyados en el piso). Los brazos del GLB se alargan un 15 % (`ARM_STRETCH`).
+- **El GLB se re-procesó:** traía una escala no uniforme (0,86 × 1,13 × 0,86) en un nodo padre, que deformaba brazos y piernas al rotarlos. Se "horneó" en la malla y los huesos, se normalizó la altura a 1,98 m (el juego lo escala a la altura real de cada jugador) y las texturas bajaron de 4096 a 2048 px (7,2 MB → 6,3 MB).
+- **Probar sin Supabase / con los 10 jugadores:** abrí el juego con **`?modelo3d=todos`** en la dirección (ej: `http://localhost:3000/?modelo3d=todos`). Pone el modelo de Curry en los 10 (todos con camiseta de los Warriors): sirve para medir rendimiento y ver las animaciones.
+
+**Lo que NO está todavía (para pasar a "todos 3D" de verdad):**
+- Un modelo por jugador, o un cuerpo base con camiseta, short y piel separables: este GLB trae uniforme y piel pintados en una sola textura, así que no se puede cambiar de equipo ni de color.
+- Dedos: no se cierran sobre la pelota (el GLB mantiene la mano abierta).
+- Menús (camisetas / tu equipo) y árbitro siguen con el cuerpo procedural.
+- Peso: ~97 000 vértices por personaje. Para 10 en pantalla conviene una versión de 15 000–20 000.
+- **Ojo:** no pude abrirlo en un navegador (sin internet para Three.js); verifiqué la sintaxis y la matemática del retargeting y la IK con un script (huesos íntegros, pies en el piso, manos al alcance) y que malla y esqueleto del GLB coinciden. Si alguna pose se ve rara, decime cuál.
+
+
+## Novedades v40 — LeBron James en 3D (`assets/lebron.glb`)
+- **Nuevo personaje 3D con esqueleto: LeBron James** con camiseta y short blancos de los Sixers (diseño Association: SIXERS al frente, JAMES 23 atrás), manga blanca en el brazo, rodillera y zapatillas blanco/azul/rojo. Cara, barba y tatuajes del modelo original.
+- Usa **el mismo sistema que Curry** (`rig-glb.js`): el cuerpo procedural sigue siendo el motor de animación (invisible) y el GLB copia cada pose cuadro a cuadro, con IK en brazos y piernas. Por eso dribleo, tiros, mates, pases, bloqueos, robos y la IA funcionan igual, sin tocar nada de eso.
+- El GLB está horneado como el de Curry: huesos con los mismos nombres (`pelvis`, `spine_01/03/05`, `neck_01`, `head`, `upperarm_l`, `lowerarm_l`, `hand_l`, `thigh_l`, `calf_l`, `foot_l`… y los de la derecha), sin escalas en la jerarquía, mirando a +Z y de **1,98 m de base** (el juego lo escala por la altura real: 206 cm → x1,04). Unos 87 mil vértices (Curry tiene 97 mil).
+- `main.js`: cada jugador elige su modelo por nombre (`LeBron James` → lebron.glb, `Stephen Curry` → curry.glb). Si un suplente reemplaza al jugador, el modelo se cambia solo.
+- `rig-glb.js`: el estiramiento de brazos ahora se calcula según el modelo (antes era fijo para Curry; con Curry da el mismo 1,15).
+- **Para probar en los 10 jugadores:** `?modelo3d=lebron` (todos con LeBron) o `?modelo3d=todos` (todos con Curry).
+- Para que aparezca en un partido, LeBron tiene que estar en el plantel con el nombre `LeBron James` (por ejemplo en `players` de Supabase, equipo PHI).
+- Crédito (licencia CC-BY 4.0): modelo base "Lebron James" de delaydlegend, Sketchfab. Retexturizado y optimizado para este juego.
+
+
+## Novedades v41 — modo carrera + Curry como personaje del juego
+- **Modo carrera DT de la v37 integrado en la v40.** Menú principal → *Modo carrera — DT* (ya no figura como "pronto"). Se copió la carpeta `career/` y su `career.css`, y en `main.js` / `index.html` / `ui.js` se agregaron los mismos ganchos que tenía la v37 (abrir la carrera, devolver el resultado y los puntos de cada jugador, abandonar partido, no abrir la pausa con el menú de carrera encima).
+- **Se mantiene todo lo de la v40:** pelota GLB, cancha 3D del Chase Center y LeBron 3D (`assets/lebron.glb`). En la carrera, un jugador llamado `LeBron James` también se ve con su modelo 3D.
+- **Curry ya no usa modelo 3D:** se borró `assets/curry.glb` y su carga en `main.js`. Vuelve al cuerpo del juego con su aspecto de `looks.js` (piel 2, pelo corto, sin barba, manga negra en el brazo izquierdo), igual que el resto de los jugadores. `?modelo3d=todos` ya no hace nada; queda `?modelo3d=lebron`.
+- **`roster.js` es el de la v37** (OVR entre 25 y 100): la carrera necesita ese rango para promesas de secundaria y jugadores de 100. La v40 lo había limitado a 40–99.
+- **Sin probar en navegador:** revisé la sintaxis de todos los .js y que ningún `import` apunte a un archivo inexistente, pero no pude correr el juego. Si algo de la carrera se rompe al jugar un partido en 3D, decime qué pantalla.
+
+
+## Novedades v42
+
+### Canchas 3D de Spurs, Rockets, Hornets y Lakers
+- `assets/sas_court.glb`, `hou_court.glb`, `cha_court.glb`, `lal_court.glb`: se conectan igual que la de los Warriors. En `courts.js` cada equipo tiene `model` y `apron` (color del contorno).
+- Están **calibradas al juego**: las líneas de fondo y banda caen en ±14,325 y ±7,62 y los tableros quedan detrás de los aros del juego (que siguen siendo los de la física). Del modelo original se sacaron el aro, la red y el faldón (el juego ya tiene los suyos) y las texturas de 4096 bajaron a 1024 (el piso queda en 2048): cada cancha pesa ~0,7 MB.
+- Se baja solo la cancha del equipo que se usa y se libera la anterior. Si el archivo no carga, queda la cancha de siempre.
+- Para sumar otra: `python3 tools/calibrar_cancha.py archivo.glb abreviatura` (necesita `numpy` y `Pillow`) y agregar `model` / `apron` en su bloque de `courts.js`.
+- Crédito de los modelos: Wayne Pearce (Sketchfab), licencia CC-BY-4.0, a partir de «Golden State Warriors Home Court».
+
+### Tabla de puntos (mantener y soltar)
+- **Tab** (teclado) o **← de la cruceta** (joystick) mantenido = se ve la tabla; al soltar se va. Ambos se pueden cambiar en *Configuración → Controles* («Tabla de puntos»).
+- Funciona en partido casual, online (anfitrión e invitado; el resumen viaja dentro de los snapshots) y partidos de la carrera. En entrenamiento muestra la sesión. No se abre con la pausa o los menús abiertos.
+- Muestra por jugador: minutos, puntos, rebotes, asistencias, robos, tapones, pérdidas, tiros de campo, triples, libres y faltas; puntos por cuarto, totales y porcentajes del equipo. Un punto verde marca a los que están en cancha.
+- Todo está en `boxscore.js`; las estadísticas se suman desde `main.js` con `bx(jugador, 'campo')`.
+
+## Novedades v43 — Tyrese Haliburton en 3D
+- (reemplazado en v45 por los 4 modelos por uniforme) `assets/haliburton.glb`: modelo de Meshy con esqueleto Mixamo (72 huesos, con skin), uniforme de los Pacers. Se redujo de 47 MB a 4,4 MB (texturas a 2048/1024), se escaló a 1,98 m (el juego lo ajusta por altura real, como a todos) y se le sacaron las animaciones Walking/Running: el juego anima por código.
+- Se activa solo cuando `players.name` contiene "Haliburton" (igual que LeBron). Para probarlo en los 10 jugadores: `?modelo3d=haliburton`.
+- `rig-glb.js` ahora entiende esqueletos Mixamo (`mixamorig:Hips`, `Spine`, `LeftArm`…) además de los tipo Unreal; sirve para sumar más jugadores hechos con Meshy + Mixamo (agregá la clave en `GLB` y la regla en `which3D`, en `main.js`).
+
+## Novedades v44 — Warriors en 3D (Curry, Draymond Green, Melton, Podziemski, Richard)
+- Nuevos modelos con esqueleto Mixamo (mismo sistema que Haliburton): `assets/curry.glb`, `draymond.glb`, `melton.glb`, `podziemski.glb` y `richard.glb`. Cada uno pesaba ~46 MB; ahora ~3,5–4,5 MB (texturas a 2048 px el color y 1024 px normal y rugosidad, en JPEG), sin las animaciones Running/Walking que traían (el juego anima por código) y escalados a 1,98 m de base (el juego los ajusta a la altura real con `scaleFor`).
+- `main.js`: se agregaron las claves en `GLB` y las reglas en `which3D`. El modelo aparece solo cuando `players.name` contiene `Stephen Curry`, `Draymond`, `Melton`, `Podziemski` o `Will Richard`. Si el nombre de Supabase es distinto, hay que ajustar la regla.
+- Probar un modelo en los 10 jugadores: `?modelo3d=curry`, `?modelo3d=draymond`, `?modelo3d=melton`, `?modelo3d=podziemski` o `?modelo3d=richard`.
+- Verificado por script: los 5 tienen los huesos que pide `rig-glb.js` y las cadenas hombro→codo→mano y cadera→rodilla→pie para la IK. Sin probar en navegador (sin internet para Three.js): si alguna pose se ve rara, decime cuál.
+
+## Novedades v45 — Haliburton en 4 uniformes y camisetas 3D de los Pacers
+**Solo Indiana Pacers.** Los otros 29 equipos y sus jugadores no cambian (comprobado: `kitsFor` da exactamente lo mismo que en v44 para todos menos IND).
+
+- **4 modelos de Haliburton, uno por uniforme** (`assets/haliburton/`, archivos originales sin tocar): el juego elige el modelo según la camiseta que tiene el equipo (no se cambian texturas de un mismo modelo).
+- **4 camisetas 3D en el menú** (`assets/uniformes/`, originales sin tocar): en el paso *Camisetas*, si el equipo es IND, cada botón muestra su camiseta girando en 3D (en vez del dibujo plano).
+- Correspondencia (id de camiseta de `kits.js` → archivos):
+
+| Camiseta | id | Modelo de Haliburton (menú y partido) | Camiseta 3D del botón |
+|---|---|---|---|
+| Icon (azul oscura) | `icon` | `haliburton/haliburton_icon.glb` (era «haliburton azul oscuro») | `uniformes/uniform_icon.glb` |
+| Association (blanca) | `association` | `haliburton/haliburton_association.glb` (era «haliburton blanca») | `uniformes/uniform_association.glb` |
+| Statement (amarilla) | `statement` | `haliburton/haliburton_statement.glb` (era «haliburton amarillo») | `uniformes/uniform_statement.glb` |
+| Classic (azul claro con línea amarilla) | `city` | `haliburton/haliburton_city.glb` (era «haliburton azul claro con linea amarilla») | `uniformes/uniform_city.glb` (era `uniform_classic_opt`) |
+
+- Los pares se determinaron mirando el color de la textura de cada archivo. Para IND, la 4.ª camiseta (id `city`, antes City negra) ahora es **Classic** (azul claro con línea amarilla), porque ninguno de los 4 modelos es negro. Cambio en `kits.js`, solo para IND.
+- **Carga bajo demanda** (`pacers3d.js`): cada Haliburton pesa ~45 MB (texturas de 4096 px), así que no se bajan al arrancar. Se baja solo el de la camiseta en uso; al apretar *Jugar* el juego espera a que esté cargado (así no aparece el cuerpo de siempre un rato) y los que dejan de usarse se liberan de memoria. Si un archivo no carga, queda el cuerpo de siempre con los colores de la camiseta y el juego sigue.
+- **Tamaño**: los modelos nuevos miden 1,70 m y el resto del juego espera 1,98 m. `rig-glb.js` acepta `gltf.fitScale` (escala **uniforme**, sin deformar ni tocar el archivo): 1,98 / 1,70 ≈ 1,165. Los demás modelos no lo usan (siguen idénticos).
+- **Dónde se ve el modelo**: partido (incl. carrera y online), entrenamiento (con la camiseta del equipo = Icon; con la remera blanca de práctica = Association) y los pasos *Camisetas* y *Tu equipo* del menú, que usan el mismo modelo que el partido. Con otro equipo (por ejemplo si lo cambiás en la carrera) Haliburton queda con el cuerpo de siempre y los colores de ese equipo.
+- Para probar: `?modelo3d=haliburton` pone el Haliburton de la camiseta de cada equipo en los 10 jugadores (solo para pruebas).
+- Las camisetas 3D de los botones muestran las texturas a 1024 px (los botones miden ~130 px) para que 4 quepan en memoria; los archivos y el modelo del jugador usan las texturas originales de 4096 px.
+- Archivos tocados: `pacers3d.js` (nuevo), `main.js`, `stage.js`, `prematch.js`, `rig-glb.js`, `kits.js`, `style.css`. Se quitó `assets/haliburton.glb` (ya no se usa).
+- Sin probar en navegador (sin internet para Three.js en este entorno): verificado por script que los 8 archivos son copias exactas, que los 4 modelos tienen los huesos y la jerarquía que pide `rig-glb.js`, y que el resto de los equipos conserva sus camisetas.
+
+
+## Novedades v48 — jugadores 3D por carpetas (y se van las camisetas 3D del menú)
+- **Una carpeta por equipo y por jugador**: `assets/jugadores/<equipo>/<nombre_apellido>/<nombre_apellido>_<N>.glb`. `N` = la camiseta que usa: **1 Icon · 2 Association · 3 Statement · 4 City** (el orden de los botones del menú). Ya están creadas las 520 carpetas de los 30 equipos (salen del CSV de Supabase; la lista exacta está en `assets/jugadores/LISTA.txt`).
+- **Si el archivo existe, el juego lo usa** (en el partido, el entrenamiento y el escenario 3D del menú). **Si no existe, usa el cuerpo que arma el juego** (`rig.js`), como siempre. No hay que registrar nada: copiás el `.glb` a su carpeta y listo.
+- **Mismo motor que LeBron y Haliburton**: el modelo copia las poses del esqueleto del juego (`rig-glb.js`: pelota en las manos, mates, pases, IK de manos y pies), así que alcanza con que venga riggeado (esqueleto Mixamo).
+- **Comodín**: un archivo sin número (`lebron_james.glb`) vale para cualquier camiseta que no tenga su `_N`. Así quedaron LeBron (`phi/`) y los Warriors (Curry, Draymond, Melton, Podziemski, Richard). Haliburton pasó a `ind/tyrese_haliburton/…_1` a `_4` (antes `haliburton_icon/association/statement/city`).
+- **Memoria**: antes de arrancar se cargan solo los 10 titulares; los suplentes se cargan cuando entran (un instante con el cuerpo de siempre) y lo que nadie usa se libera. Las texturas de más de 2048 px se muestran a 2048 (`MAX_TEX` en `players3d.js`; `0` para no tocarlas).
+- **Sacado**: las camisetas 3D giratorias del menú de camisetas (vuelven los dibujos planos) y `assets/uniformes/`. `pacers3d.js` → `players3d.js`.
+- Para probar un modelo en los 10 jugadores: `?modelo3d=lebron` (o `curry`, `haliburton`, o la ruta `gsw/stephen_curry/stephen_curry`).
+- Si agregás jugadores nuevos en Supabase: `python3 tools/crear_carpetas_jugadores.py archivo.csv` crea las carpetas que falten.
+
+
+## Novedades v49 — conjuntos en PNG y un solo cuerpo por jugador
+- **Conjuntos en PNG:** carpetas `assets/conjuntos/<sigla>/conjunto_<apodo>_<N>/` (30 equipos × 4; ver `assets/conjuntos/LISTA.txt`). Poné adentro el PNG con el mismo nombre que la carpeta, por ejemplo `assets/conjuntos/gsw/conjunto_warriors_1/conjunto_warriors_1.png` (1 Icon · 2 Association · 3 Statement · 4 City). En el paso Camisetas del menú el PNG se ve grande (y crece al pasar el mouse o elegirlo); si no hay PNG queda el dibujo de siempre. `tools/crear_carpetas_conjuntos.py` recrea las carpetas.
+- **Nunca se ven los dos cuerpos:** si un jugador tiene modelo 3D (o todavía se está viendo si lo tiene / se está bajando), el cuerpo que arma el juego queda oculto, en el menú y en el partido. Solo se muestra el cuerpo del juego si de verdad no hay modelo.
+
+## Novedades v50 — pantalla de carga y barra de tiro con dificultad
+- **Pantalla de carga** (`boot.js` + `assets/loading.jpg`): al abrir el juego se ve la cancha con una barra que avanza por MB bajados, y dice "MORENO GAMES" chiquito abajo a la derecha. Baja por adelantado la pelota, las canchas 3D, los escudos, la imagen del menú, los planteles y los modelos 3D de los jugadores, así en el menú de equipos Curry y compañía ya están. Si tarda más de 25 s aparece "Entrar igual".
+- La lista de lo que se baja está en `assets/manifest.json`. Se regenera con `python3 tools/crear_manifiesto.py` (por defecto: la camiseta de número más bajo de cada jugador + las otras si pesan menos de 8 MB; con `--todo`, todo). Si agregás un GLB y no regenerás, el juego igual lo carga cuando lo necesita; solo que no cuenta en la barra de carga.
+- **Barra de tiro con dificultad** (`chargeTarget` en `main.js`): la barra corre más rápido = es más difícil soltar en la línea blanca.
+  - Triple: base ×1.28 más rápida que un tiro normal.
+  - Rating de la zona (triple / media / cerca): 99 → ~×0.77, 70 → ×1, 40 → ~×1.24. Mejor tirador = barra más lenta.
+  - Defensor encima: hasta +45 % de velocidad; sin nadie cerca, sin recargo. Cansado: +10 %.
+  - Tiros libres: base ×1.10 y depende del rating de tiro libre (90 → ×0.99, 50 → ×1.22).
+  - Los números están todos juntos en esa función para ajustarlos fácil. Online: el invitado calcula la velocidad de su propia barra con la misma regla.
+
+## Novedades v51 — cinemática de inicio
+- **Intro** (`intro.js`, sobre la pantalla de carga): la cancha se va ampliando con una cámara que se acerca al aro; entra corriendo un jugador-sombra con una corona dorada, salta y la clava. En el impacto hay flash, anillo de luz, chispas, temblor de cámara y aparece **MORENO GAMES** en grande, con la corona cayendo sobre el título. Es todo 2D (canvas + CSS): no descarga nada y arranca en el primer cuadro.
+- Cuando todo terminó de cargar y la cinemática llegó al título, aparece "PRESIONÁ CUALQUIER TECLA PARA JUGAR" (teclado, clic o cualquier botón del joystick). Hasta entonces la barra de carga sigue abajo.
+- Cualquier tecla o clic **durante** la cinemática la salta y va directo al título. Mientras la pantalla está, ninguna tecla llega al juego.
+- Con "reducir movimiento" activado en el sistema operativo, va directo al título.
+- Los tiempos están arriba de `intro.js` (`T_RUN`, `T_IMPACT`, `T_TITLE`, `T_CROWN`, `T_DONE`, `Z_END` = zoom final).
+
+
+## Novedades v52 — juego más liviano (una estrella por equipo)
+- **Jugadores 3D:** se borraron todas las carpetas de `assets/jugadores/` salvo las de las estrellas que tienen modelo: **Curry** (gsw, camisetas 1 a 4), **Haliburton** (ind, 1 a 4) y **LeBron** (phi, solo la 2). Los demás jugadores usan el cuerpo que genera el juego (`rig.js`).
+- **Una estrella por equipo:** la tabla `STARS` de `players3d.js` dice cuál es la estrella de cada uno de los 30 equipos. Solo ellos buscan modelo 3D (el resto ni consulta al servidor). Para sumar una: crear `assets/jugadores/<equipo>/<nombre_apellido>/` y copiar ahí `<nombre_apellido>_1.glb` a `_4.glb` (1 Icon · 2 Association · 3 Statement · 4 City).
+- **Uniformes por código:** se borró `assets/conjuntos/` (PNG). El menú dibuja las camisetas con SVG (`kits.js`). Los 4 modelos de Haliburton y Curry se mantienen como los 4 conjuntos de esos equipos.
+- Se borraron `LISTA.txt`, `LEEME.txt` y las herramientas `crear_carpetas_jugadores.py` y `crear_carpetas_conjuntos.py`. `assets/manifest.json` se regeneró con `python3 tools/crear_manifiesto.py`.
+- Canchas 3D (gsw, lal, sas, hou, cha), pelota, escudos y menú: sin cambios.
+
+
+## Novedades v53 — sin modelos de jugadores + cinemática más fluida
+- **Se borraron todos los modelos 3D de jugadores** (`assets/jugadores/`, incluidos Curry, Haliburton y LeBron): todos usan el cuerpo que genera el juego (`rig.js`) y los uniformes se dibujan por código. `STARS` en `players3d.js` quedó vacío, así que el juego no consulta al servidor por modelos. Para volver a usarlos: copiar el GLB a `assets/jugadores/<equipo>/<nombre_apellido>/` y agregar al jugador en `STARS`.
+- **Cinemática de inicio más fluida:**
+  - El juego (`main.js`) ya no se arma mientras suena la cinemática: `boot.js` lo arranca recién cuando la cinemática llega al título. Los módulos se bajan y compilan antes en paralelo (`modulepreload`), y los archivos (pelota, canchas, escudos) siguen bajándose durante la animación.
+  - La silueta usa un solo pase de brillo y solo sobre el recuadro del jugador (antes eran dos pases sobre toda la imagen); el canvas es de 1536×864 fijo.
+  - Cámara con `translate3d` (sin `calc()`), barra de carga que se repinta una vez por cuadro, y el título sin desenfoque animado (el brillo se repite 2 veces en lugar de infinito).
+- Si preferís que el juego empiece a armarse antes (menos espera después del título, pero más tirones en la cinemática), se cambia en `boot.js` el momento en que se llama a `startGame()`.
+
+
+## Novedades v54 — ULTIMATE TEAM (nuevo modo)
+Menú principal → **Ultimate Team**. Todo el código está en la carpeta `ultimate/`.
+
+**Pestañas** (con **LB / RB** o **Q / E** se cambia de una a otra):
+- **Inicio**: portada con tu mejor carta, evento de la semana (Torneo Élite), tu plantilla, sobres destacados, objetivos diarios y los 4 modos.
+- **Objetivos**: diarios (3 al día), semanales y hitos. Se reclaman a mano.
+- **Jugar**: **Rookie Battles** (10 etapas con estrellas), **Dream Live** (División 10→1, 30 puntos por división, premios de la semana por victorias), **All-Star Live** (entrada 2.000, hasta 10 partidos, termina a la 3.ª derrota, premios por victorias) y **Squad Battles** (4 niveles de rival, puntos y premios semanales). Los partidos son el 3D de siempre: tu plantilla de cartas contra un rival armado con cartas reales.
+- **Tienda**: Pack Rookie, Oro, Élite y Especial (con gemas), con la **apertura 3D** del proyecto de sobres (walkout desde 86+ con la cancha real del equipo). Los sobres ganados quedan en "Mis sobres".
+- **Mercado**: comprar (filtros por nombre, posición, equipo, media y precio; el stock y los precios cambian por día), vender (precio entre 70 % y 125 % del valor; cuanto más caro, más tarda; 5 % de comisión; dura 12 h) y venta rápida desde la ficha.
+- **Plantilla**: cancha con los 5 titulares + banco de 8, colección con filtros, **Autoarmar**, penalización por jugar fuera de posición y ficha de cada carta con los atributos 2K.
+- **Mi cuenta**: nombre del club, camiseta y cancha del club (cualquiera de los 30 equipos), duración del cuarto, estadísticas, progreso de colección.
+
+**Cartas ↔ jugadores de la base** (`ultimate/ut-data.js`): cada carta se enlaza con un jugador de la tabla `players` (por `ut_cards.player_id` y, si no está, por equipo + apellido, con tolerancia a errores de OCR). Del jugador salen nombre, número, altura, peso, piel, pelo, accesorios y los atributos 2K; la **media de la carta manda** (los atributos se corren la diferencia). Si no hay jugador en la base, se estiman desde la media y la posición.
+
+**Supabase**: corré `supabase/007_ultimate_team.sql` (después del 002). Crea `ut_cards` (524 cartas + enlace), `ut_saves` (progreso por usuario) y la vista `ut_cartas` para revisar el enlace. Sin cuenta o sin correr el SQL, todo funciona igual y se guarda en el navegador.
+
+**Archivos nuevos:** `ultimate/ut.js` (pantallas) · `ut-state.js` (reglas: economía, sobres, mercado, objetivos, modos, guardado) · `ut-data.js` (cartas, rarezas, enlace con la base) · `ut-match.js` (puente con el partido 3D) · `packs3d.js` + `court3d.js` (apertura de sobres) · `ut.css` · `cards/` (524 webp) · `data/players.js`.
+**Tocados:** `index.html`, `ui.js` (item del menú), `main.js` (`openUltimate`), `gamepad.js` (joystick en Ultimate Team).
+
+**Ojo:** no pude abrirlo en un navegador (sin internet para Three.js/Supabase). Probé con scripts la lógica (sobres, mercado, plantilla, modos, recompensas, enlace carta↔jugador con un plantel de prueba) y que las 7 pestañas y todos los modales se generen sin errores. Si algo se ve o se siente raro, decime cuál.
+
+## Ultimate Team · mercado online (008)
+- Con cuenta (y Supabase configurado) el MERCADO es entre jugadores reales: publicás cartas a tu precio (entre la mitad de su valor y su valor máximo: una 85 hasta 25.000, Wembanyama hasta 500.000, hasta 20 a la vez, duran 3 días), otros las compran, cobrás el precio menos 5 %. Lo no vendido vuelve a tu colección.
+- Correr `supabase/008_mercado_online.sql` en el SQL Editor (usa tablas propias `utm_*`, no choca con el 007).
+- Invitados / sin Supabase: sigue el mercado simulado de siempre.
+
+
+## Novedades v61 — público en los partidos, All-Star nuevo y Dream Live con rachas
+**Ambiente de estadio (`crowd.js`)** — suena en TODOS los partidos 3D (casual, online, carrera, Ultimate Team), no en entrenamiento. Todo se genera por código (Web Audio), no baja nada:
+- Murmullo de gente + rumor de tribuna; sube cuando el partido está parejo y en el 4.º cuarto.
+- Festejo con aplausos y "wooo" cuando anotás o tapás; "awww" cuando anota el rival; "ooooh" cuando el tiro pega en el aro y no entra; abucheo si tu equipo comete violación de 24 s; silencio en los tiros libres.
+- **"DE-FENSE, DE-FENSE"** con aplausos y pisadas cuando el rival tiene la pelota un rato (más seguido si el partido está cerrado o vas perdiendo).
+- Bocina al final de cada cuarto.
+- Volumen en **Configuración → Volumen del público**. Al pausar se calla.
+- Sonidos reales opcionales: ver `assets/audio/LEEME.txt` (crowd_loop, cheer, cheer_big, ooh, groan, boo, defense, horn).
+
+**Ultimate Team · All-Star Live (nuevo formato)**
+- Entrada: **10.000 monedas**.
+- **Clasificatoria**: hasta 5 partidos en **Difícil**; con **2 victorias** pasás (apenas llegás a 2 ya clasificás). Si no, perdés la entrada y te llevás 1.000 monedas de consuelo.
+- **Fase final**: **10 partidos en Extremo** (se juegan los 10) y **cada victoria da un premio**, cada vez mejor (monedas y sobres; la 10.ª: 15.000 monedas + sobre Especial). Los premios están en `ALLSTAR.rewards` (`ultimate/ut-state.js`).
+- Un torneo viejo en curso se cancela y devuelve los 5.000 de la entrada anterior.
+
+**Ultimate Team · Dream Live (ascensos y descensos estilo FC)**
+- Cada división es de **15 puntos** (antes 30). Victoria +3, derrota −2.
+- **Racha**: 2 victorias seguidas = ×2 puntos, 4 seguidas = ×3. Una derrota corta la racha. La pantalla muestra tu racha y cuánto vale la próxima victoria.
+- **Ascenso** al llegar a 15 (te quedan los puntos que sobran, mínimo 4 de colchón). **Descenso** si bajás de 0 (empezás la división de abajo con 8 puntos). La División 10 no baja.
+- Todos los números están juntos en `DREAM` (`ultimate/ut-state.js`). Las divisiones ya empezadas se pasan a la nueva escala (puntos ÷ 2).
+
+## v61 (2.ª tanda) — monedas por partido y pantallas nuevas
+- **Todo partido de Ultimate Team paga monedas**: 500 por terminarlo y 700 si lo ganás (`MATCH_PAY` en `ultimate/ut-state.js`). Abandonar no paga. Los premios de cada modo se suman encima (ascensos, etapas Rookie por primera vez, premio de nivel de Squad Battles, premios del All-Star). Se sacaron las monedas chicas que pagaban antes Dream Live, Rookie repetido y Squad al perder, porque ahora las cubre este pago.
+- **All-Star Live**: pantalla nueva con las dos etapas lado a lado (círculos ✓/✕ por partido), la regla de cada una, qué pasa si clasificás o no, y la escalera de premios de las 10 victorias. Premios mejorados (suman ~58.000 monedas más sobres) y nuevo **premio por clasificar** (2.000) y **consuelo** (2.500). En `ALLSTAR`.
+- **Dream Live**: pantalla nueva con la barra de puntos (zona de descenso / ascenso), la escalera de divisiones 10→1, "si ganás / si perdés" con el resultado exacto, la racha actual y un panel "Cómo funciona".

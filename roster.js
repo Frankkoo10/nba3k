@@ -63,7 +63,7 @@ export const inchesToFtIn = i => `${Math.floor(i / 12)}'${Math.round(i % 12)}"`;
 /** Normaliza una fila de la base (o un objeto cualquiera) a lo que usa el juego. */
 export function normalizePlayer(r, team, i = 0) {
   const pos = POS.includes(String(r.position).toUpperCase()) ? String(r.position).toUpperCase() : POS[i % 5];
-  const ovr = clampN(r.ovr, 40, 99, 72);
+  const ovr = clampN(r.ovr, 25, 100, 72);
   const detailed = ATTRS.some(([, col]) => col !== 'speed' && has(r[col]));          // ¿la fila trae atributos estilo 2K?
   // altura: pulgadas (height_in) → cm; si solo hay cm, se calcula la pulgada
   const heightIn = has(r.height_in) ? clampN(r.height_in, 67, 90, 78) : null;

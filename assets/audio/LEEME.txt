@@ -1,0 +1,18 @@
+SONIDOS REALES DEL PÚBLICO (opcional)
+=====================================
+El juego ya genera todo el ambiente por código (crowd.js). Si preferís usar grabaciones reales:
+
+1. Copiá acá los archivos (mp3, ogg o wav) con ESTOS nombres (sin importar la extensión):
+     crowd_loop   colchón de estadio, se repite en loop durante todo el partido
+     cheer        festejo normal de canasta
+     cheer_big    festejo grande (mate, triple, tapón)
+     ooh          "ooooh" cuando el tiro pega en el aro
+     groan        suspiro cuando anota el rival
+     boo          abucheo
+     defense      un "DE-FENSE" completo (se reproduce entero)
+     horn         bocina de fin de cuarto
+2. Anotá los nombres de archivo en lista.json, por ejemplo:
+     { "archivos": ["crowd_loop.mp3", "cheer.mp3", "defense.mp3", "horn.mp3"] }
+3. Lo que no esté en la lista lo sigue generando el sintetizador.
+
+Ojo con los derechos: usá sonidos propios o libres (por ejemplo de freesound.org con licencia CC0).

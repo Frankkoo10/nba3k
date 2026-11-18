@@ -363,4 +363,5 @@ export function applyPose(R, J) {
   // Respiración sutil.
   const b = Math.sin(performance.now() * 0.0018 + R.seed) * 0.5 + 0.5;
   R.chest.forEach(m => { m.scale.y = 1 + 0.006 * b; });
+  if (R.sync3D) R.sync3D();                                   // personaje 3D con esqueleto (rig-glb.js): copia esta pose
 }

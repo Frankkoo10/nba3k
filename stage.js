@@ -4,6 +4,8 @@ import { SKIN_TONES } from './roster.js';
 import { buildFor, scaleFor } from './looks.js';
 import { nickname } from './kits.js';
 import { fitCfg } from './stagecam.js';
+import * as P3D from './players3d.js';
+import { attachModel } from './rig-glb.js';
 
 /* ============================================================================
    Escenario 3D del menú previo al partido (lo usan "Camisetas" y "Tu equipo").
@@ -61,6 +63,24 @@ export function createStage(canvas) {
   floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
 
   const figs = [];
+  /* Modelo 3D del jugador (assets/jugadores/<equipo>/<nombre_apellido>/…_<camiseta>.glb, ver players3d.js): el mismo que usa el partido. Sin archivo queda el cuerpo de siempre. */
+  const m3Pending = new Set(), m3Fail = new Set(); let m3Timer = 0;
+  const syncModel = f => {
+    const R = f.R, w = f.want, key = R.root.visible && w ? P3D.keyFor(w.info, w.ab, w.kit, () => syncModel(f)) : null;
+    f.m3want = key;
+    if (R.m3d && R.m3dKey !== key) { R.m3d.setVisible(false); R.root.remove(R.m3d.model); R.m3d = null; R.m3dKey = null; }
+    const gltf = key ? P3D.loaded(key) : null;
+    if (key && !gltf && !m3Fail.has(key) && !m3Pending.has(key)) {
+      m3Pending.add(key);
+      P3D.load(key).then(() => figs.forEach(syncModel)).catch(e => { m3Fail.add(key); console.warn(`No se pudo cargar ${key} en el menú; queda el cuerpo de siempre.`, e); }).finally(() => m3Pending.delete(key));
+    }
+    const clone = P3D.skelClone();
+    if (gltf && clone && !R.m3d && attachModel(R, gltf, clone)) R.m3dKey = key;
+    R.m3d?.setVisible(!!gltf);
+    /* Si tiene modelo 3D (o todavía se está viendo si lo tiene / se está bajando), el cuerpo del juego queda oculto: nunca se ven los dos. */
+    if (!R.m3d) R.hips.visible = !(w && R.root.visible && (key ? !gltf && !m3Fail.has(key) : P3D.checking(w.info, w.ab, w.kit)));
+    clearTimeout(m3Timer); m3Timer = setTimeout(() => P3D.setUsers('stage', figs.map(x => x.m3want)), 400);     // el menú solo retiene los modelos que está mostrando
+  };
   for (let i = 0; i < 5; i++) { const R = makeRig(scene), J = mkJ(); R.root.visible = false; figs.push({ R, J, ry: 0, i, g: 0, gt: 0, glow: makeGlow() }); scene.add(figs[i].glow.group); }
   const glowLight = new THREE.PointLight(0xffc53d, 0, 5, 1.6); glowLight.position.set(0, 1.4, 1.2); scene.add(glowLight);
 
@@ -75,11 +95,12 @@ export function createStage(canvas) {
       key.position.set(sceneName === 'lineup' ? -3 : -2.5, 8, 6); key.target.position.set(0, 0, 0);
       figs.forEach((f, i) => {
         const it = items[i];
-        f.R.root.visible = !!it; if (!it) return;
+        f.R.root.visible = !!it; f.want = it ? { info: it.player, ab: it.team.ab, kit: it.kit.id } : null; if (!it) return;
         dress(f.R, it); standPose(f.J, i);
         f.R.root.position.set(it.x, 0, it.z); f.ry = it.ry || 0; f.R.root.rotation.y = f.ry; f.glow.group.position.set(it.x, 0, it.z);
         applyPose(f.R, f.J);
       });
+      figs.forEach(syncModel);
       api.resize();
     },
     /** `cur` = jugador sobre el que estás parado (brilla fuerte y pulsa), `sel` = titular elegido para cambiar (brilla fijo y más suave). -1 = ninguno. */

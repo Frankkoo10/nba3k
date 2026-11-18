@@ -6,6 +6,9 @@ import * as TS from './trainsetup.js';
 import * as UI from './ui.js';
 import { queueXp, flushXp, signOut } from './auth.js';
 import { makeRig, mkJ, applyPose } from './rig.js';
+import { attachModel } from './rig-glb.js';
+import * as P3D from './players3d.js';
+import * as Boot from './boot.js';
 import { fallbackRoster, loadRoster, SKIN_TONES } from './roster.js';
 import { buildFor, scaleFor } from './looks.js';
 import * as PM from './prematch.js';
@@ -15,8 +18,12 @@ import { nickname, lum, kitById } from './kits.js';
 import * as Pad from './gamepad.js';
 import * as KB from './keyboard.js';
 import * as Pause from './pause.js';
+import * as Career from './career/ui.js';
+import * as UT from './ultimate/ut.js';
+import * as Box from './boxscore.js';
+import * as Crowd from './crowd.js';
 import { solveBank, solveRoll, solveBounce } from './shotsim.js';
-import { speedMul, accelMul, drainMul, recoverMul, jumpMul, canDunk, releaseSkill, reboundScore } from './skill.js';
+import { speedMul, accelMul, drainMul, recoverMul, jumpMul, canDunk, releaseSkill, reboundScore, zoneRating } from './skill.js';
 import { PROFILES, aiPrepare, aiThink, newAIState, shotQuality, bestPass, styledProfile } from './ai.js';
 
 /* ============ Partido online: quién soy ============ */
@@ -80,12 +87,13 @@ floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(300, 300), mat(0x131a2b, 1));
 ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; ground.receiveShadow = true; scene.add(ground);
 
+const courtGfx = [];                                   // líneas y pinturas de la cancha genérica (se ocultan cuando hay cancha 3D)
 const lineMats = [], edgeMats = [];                     // líneas internas y líneas del borde de la cancha (cada cancha define sus colores)
 function line(pts, r = 0.025, edge = false) {
   const curve = new THREE.CatmullRomCurve3(pts.map(p => V3(...p)));
   const m = new THREE.Mesh(new THREE.TubeGeometry(curve, Math.max(2, pts.length * 3), r, 6, false), mat(0xffffff, 0.6));
   (edge ? edgeMats : lineMats).push(m.material);
-  m.position.y = 0.015; scene.add(m);
+  m.position.y = 0.015; scene.add(m); courtGfx.push(m);
 }
 const seg = (x1, z1, x2, z2, edge = false) => line([[x1, 0, z1], [x2, 0, z2]], 0.025, edge);
 function arc(cx, cz, r, a0, a1, n = 48) {
@@ -99,7 +107,7 @@ seg(-COURT_X, -COURT_Z, -COURT_X, COURT_Z, true); seg(COURT_X, -COURT_Z, COURT_X
 seg(-COURT_X, 0, COURT_X, 0); arc(0, 0, 1.83, 0, Math.PI * 2, 64);
 for (const s of [-1, 1]) {
   const key = new THREE.Mesh(new THREE.PlaneGeometry(4.88, 5.79), mat(0xa63f2a, 0.5)); keyMats.push(key.material);
-  key.rotation.x = -Math.PI / 2; key.position.set(0, 0.004, s * (COURT_Z - 5.79 / 2)); scene.add(key);
+  key.rotation.x = -Math.PI / 2; key.position.set(0, 0.004, s * (COURT_Z - 5.79 / 2)); scene.add(key); courtGfx.push(key);
   const ft = s * (COURT_Z - 5.79);
   seg(-2.44, s * COURT_Z, -2.44, ft); seg(2.44, s * COURT_Z, 2.44, ft); seg(-2.44, ft, 2.44, ft);
   arc(0, ft, 1.83, 0, Math.PI * 2, 40);
@@ -156,20 +164,60 @@ function buildHoop(s) {
   rim.rotation.x = Math.PI / 2; rim.position.set(0, RIM_Y, hz); rim.castShadow = true; scene.add(rim);
   const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.03, 0.16), mat(0xff5a1f));
   bracket.position.set(0, RIM_Y, bz - s * 0.1); scene.add(bracket);
-  return { s, hz, bz, front, done: false, net: makeNet(hz) };
+  return { s, hz, bz, front, done: false, net: makeNet(hz), parts: [pole, arm, glass, frame, sq] };
 }
 const hoops = [buildHoop(-1), buildHoop(1)];
 const hoopFor = sign => hoops[sign < 0 ? 0 : 1];
 /* ---- cancha / estadio: cada equipo tiene la suya (courts.js). setCourt cambia parquet, pintura, logo, tribuna, banners y pantallas ---- */
 let arena = null, curCourt = '';
+let courtObj = null, curDef = null;                     // courtObj: cancha 3D del equipo activo (assets/<ab>_court.glb), si ya cargó
+const courtCache = new Map(), courtLoading = new Set();   // ruta del GLB -> escena ya cargada · rutas que se están bajando
+function applyCourtLook() {                              // con cancha 3D se ocultan las líneas, la pintura, los soportes, el tablero y lo pintado sobre el parquet (logo, textos, contorno)
+  const on = !!(curDef?.model && courtObj);
+  courtGfx.forEach(m => { m.visible = !on; });
+  hoops.forEach(h => h.parts.forEach(p => { p.visible = !on; }));
+  for (const sc of courtCache.values()) sc.visible = on && sc === courtObj;
+  (arena?.floorGfx || (arena?.floorLogo ? [arena.floorLogo] : [])).forEach(m => { m.visible = !on; });
+}
 function setCourt(def) {
   if (!def || curCourt === def.id) return;
-  floorMat.map?.dispose(); floorMat.map = woodTexture(def.floor); floorMat.needsUpdate = true;
+  curDef = def;
+  courtObj = def.model ? (courtCache.get(def.model) || null) : null;
+  const m3d = !!courtObj;
+  floorMat.map?.dispose(); floorMat.map = m3d ? null : woodTexture(def.floor); floorMat.color.set(m3d ? (def.apron || '#ffc324') : 0xffffff); floorMat.needsUpdate = true;
   keyMats.forEach(m => { m.color.set(def.paint); m.roughness = def.paintRough ?? 0.5; });
   lineMats.forEach(m => m.color.set(def.lineColor || '#ffffff')); edgeMats.forEach(m => m.color.set(def.edgeColor || def.lineColor || '#ffffff'));
   arena?.dispose(); arena = buildArena(scene, def); curCourt = def.id;
+  applyCourtLook();
+  if (def.model && !courtObj) loadCourtModel(def);
 }
 setCourt(courtFor('GSW'));                              // arranca en el Chase Center; cada partido / entrenamiento pone la que corresponde
+/* Canchas 3D (assets/gsw_court.glb, sas_court.glb, hou_court.glb, cha_court.glb, lal_court.glb): piso con líneas, logos y publicidad + soportes y tableros de los aros.
+   Están calibradas al juego: las líneas de fondo y banda caen en ±14,325 y ±7,62, y los aros en ±12,75 (la física no cambia).
+   El aro y la red con física siguen siendo los del juego. Se baja solo la del equipo que se usa (y se libera la anterior: cada una pesa ~20 MB en la GPU).
+   Si el archivo no carga, queda la cancha de siempre. */
+function disposeScene(o) {
+  const seen = new Set();
+  o.traverse(n => { n.geometry?.dispose?.(); for (const m of [].concat(n.material || [])) { if (seen.has(m)) continue; seen.add(m); m.map?.dispose?.(); m.dispose?.(); } });
+}
+async function loadCourtModel(def) {
+  const path = def.model; if (courtCache.has(path) || courtLoading.has(path)) return;
+  courtLoading.add(path);
+  try {
+    const gltf = await P3D.loadGLTF(path);
+    const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    gltf.scene.traverse(o => {
+      if (!o.isMesh) return;
+      const m = o.material; o.receiveShadow = true; o.castShadow = o.name !== 'piso';
+      if (o.name === 'piso') { m.roughness = 0.45; m.metalness = 0; } else if (m.metalness > 0.2) m.metalness = 0.1;
+      if (m.map) m.map.anisotropy = aniso;
+    });
+    gltf.scene.visible = false; scene.add(gltf.scene); courtCache.set(path, gltf.scene);
+    for (const [p, sc] of [...courtCache]) if (p !== path && p !== curDef?.model) { scene.remove(sc); disposeScene(sc); courtCache.delete(p); }   // libera la cancha que ya no se usa
+    if (curDef?.model === path) { const d = curDef; curCourt = ''; setCourt(d); }      // si la cancha que se pidió es esta, se rehace con el modelo
+  } catch (e) { console.warn(`No se pudo cargar ${path}; sigo con la cancha de siempre.`, e); }
+  finally { courtLoading.delete(path); }
+}
 
 /* ============ Pelota ============ */
 function ballTexture() {
@@ -185,6 +233,21 @@ function ballTexture() {
 }
 const ball = new THREE.Mesh(new THREE.SphereGeometry(BR, 32, 24), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.75 }));
 ball.castShadow = true; scene.add(ball);
+/* Pelota con modelo 3D (assets/ball.glb: NBA Wilson, 768 triángulos, texturas 1024). Mientras carga (o si falla) queda la esfera básica de arriba.
+   El modelo ya viene centrado y con radio BR, así que la física, el giro y las manos siguen igual: solo cambia el aspecto. */
+(async () => {
+  try {
+    const gltf = await P3D.loadGLTF('assets/ball.glb');
+    let src = null; gltf.scene.traverse(o => { if (o.isMesh && !src) src = o; });
+    if (!src) throw new Error('el GLB no tiene malla');
+    const mat = src.material, aniso = renderer.capabilities.getMaxAnisotropy();
+    mat.metalness = 0;
+    for (const k of ['map', 'normalMap', 'roughnessMap']) if (mat[k]) mat[k].anisotropy = Math.min(8, aniso);
+    const oldG = ball.geometry, oldM = ball.material;
+    ball.geometry = src.geometry; ball.material = mat;
+    oldG.dispose(); if (oldM.map) oldM.map.dispose(); oldM.dispose();
+  } catch (e) { console.warn('No se pudo cargar assets/ball.glb; sigo con la pelota básica.', e); }
+})();
 const BP = ball.position, BV = V3(), BW = V3();
 /* Estado de la pelota: quién la tiene y en qué fase está.
    mode: 'held' (en manos de B.holder) · 'shot' (tiro en el aire) · 'pass' (pase en el aire) · 'loose' (suelta / rebote) · 'dead' (pelota muerta, árbitro) */
@@ -242,11 +305,41 @@ function drawLabel(a) {
   } else g.fillText(`#${n.number}  ${last}`, 128, 33);
   a.labelTex.needsUpdate = true;
 }
+/* ---- Personajes 3D con esqueleto (v48): carpetas por equipo y jugador ----
+   assets/jugadores/<equipo>/<nombre_apellido>/<nombre_apellido>_<1..4>.glb  (1 Icon · 2 Association · 3 Statement · 4 City; ver players3d.js).
+   Solo la estrella de cada equipo (STARS en players3d.js) puede tener modelo: si su archivo y su camiseta existe, se usa ese modelo (copia las poses del cuerpo procedural, ver rig-glb.js). Si no existe, queda el cuerpo que arma el juego.
+   Los modelos pueden pesar bastante: no se bajan al arrancar, solo los de los 10 que juegan (antes de empezar) y los suplentes cuando entran; lo que nadie usa se libera.
+   Para probar un modelo en los 10 jugadores: ?modelo3d=lebron, curry, haliburton, o la ruta  equipo/jugador/archivo (sin .glb). */
+const MODEL3D = new URLSearchParams(location.search).get('modelo3d');
+const FORCE = {};
+const FORCED = MODEL3D ? `${P3D.ROOT}/${FORCE[MODEL3D] || MODEL3D}.glb` : null;
+const m3Fail = new Set(), m3Pending = new Set();
+let m3Timer = 0;
+/** Modelo 3D que le toca a este jugador (ruta del GLB) o null si no tiene: entonces queda el cuerpo del juego. */
+const which3D = a => (FORCED || (a.info && a.m3k ? P3D.keyFor(a.info, a.m3k.ab, a.m3k.kit, () => refreshModel(a)) : null));
+function refreshModel(a) {
+  const key = a.info ? which3D(a) : null; a.m3want = key;
+  if (a.R.m3d && a.R.m3dKey !== key) { a.R.m3d.setVisible(false); a.R.root.remove(a.R.m3d.model); a.R.m3d = null; a.R.m3dKey = null; }   // cambió el jugador (banco) o su camiseta: otro modelo
+  let gltf = key ? P3D.loaded(key) : null;
+  if (key && !gltf && !m3Fail.has(key) && !m3Pending.has(key)) {
+    m3Pending.add(key);
+    P3D.load(key, Math.min(8, renderer.capabilities.getMaxAnisotropy()))
+      .then(() => agents.forEach(refreshModel))
+      .catch(e => { m3Fail.add(key); console.warn(`No se pudo cargar ${key}; sigo con el cuerpo de siempre.`, e); })
+      .finally(() => m3Pending.delete(key));
+  }
+  const clone = P3D.skelClone();
+  if (gltf && clone && !a.R.m3d) { if (attachModel(a.R, gltf, clone)) a.R.m3dKey = key; }
+  a.R.m3d?.setVisible(!!gltf);
+  /* Si tiene modelo 3D (o todavía se está viendo si lo tiene / se está bajando), el cuerpo del juego queda oculto: nunca se ven los dos. */
+  if (!a.R.m3d) a.R.hips.visible = !(a.info && a.m3k && (key ? !gltf && !m3Fail.has(key) : P3D.checking(a.info, a.m3k.ab, a.m3k.kit)));
+  clearTimeout(m3Timer); m3Timer = setTimeout(() => P3D.setUsers('game', agents.map(x => x.m3want)), 400);      // libera de memoria los modelos que ya nadie usa
+}
 function setInfo(a, info) {
   a.info = info; a.R.setSkin(SKIN_TONES[info.skin] ?? SKIN); a.R.setLook(info.name || info.id, info.look); a.R.setBuild(buildFor(info)); a.R.setUniformInfo?.(info);
   a.scale = scaleFor(info); a.R.root.scale.setScalar(a.scale);
   a.spdMul = speedMul(info); a.accMul = accelMul(info); a.drainM = drainMul(info); a.recM = recoverMul(info); a.jumpM = jumpMul(info);   // físico según los atributos (skill.js)
-  drawLabel(a);
+  drawLabel(a); refreshModel(a);
 }
 function applyRosters(rA, rB) {
   [rA, rB].forEach((r, t) => { r.starters.forEach((p, s) => { const a = T[t].court[s]; setInfo(a, p); a.stam = 1; }); T[t].bench = r.bench.map(p => ({ ...p, rest: 1 })); });
@@ -281,6 +374,18 @@ const humansOn = team => humans.filter(h => h.team === team);
 const multi = () => mode === 'match' && humans.length > 1;
 const teamsWithHumans = () => new Set(humans.map(h => h.team)).size;
 const freeMates = (team, except) => T[team].court.filter(a => a.active && (!a.hum || a === except));
+let careerCtx = null; const gpts = {};                  // modo carrera: { done(resultado) } mientras se juega un partido de la carrera · puntos reales de cada jugador
+const bx = (a, f, n = 1) => { if (a?.info && mode === 'match' && netRole !== 'guest') Box.add(a.team, infoKey(a.info), f, n); };   // suma a la tabla de puntos (boxscore.js)
+const trackPts = (pts, who, ft) => {
+  const a = who || B.shooter || B.holder || B.lastTouch; if (!a?.info) return;
+  gpts[a.info.id] = (gpts[a.info.id] || 0) + pts;
+  if (mode !== 'match' || netRole === 'guest') return;
+  bx(a, 'pts', pts); Box.addQ(a.team, quarter, pts);
+  if (ft) { bx(a, 'ftm'); return; }
+  bx(a, 'fgm'); if (pts === 3) bx(a, 'tpm');
+  const q = B.ast; if (q && q.to === a && q.from.team === a.team && gameTime - q.t < 3.2) bx(q.from, 'ast');     // asistencia: pase al que anota hace menos de ~3 s
+  B.ast = null; B.reboundOf = null;
+};
 let paused = true, scoreA = 0, scoreB = 0, quarter = 1, qLen = 180, clockT = 180, shotClock = 24, gameTime = 0;
 let teamA = TEAMS[13], teamB = TEAMS[1];
 let mode = 'match';                                   // 'match' (partido casual) | 'training'
@@ -350,12 +455,18 @@ function resetTraining() {
   BP.set(0.26, 0.9, -6.4); BV.set(0, 0, 0); BW.set(0, 0, 0);
   giveBall(a); updatePowerUI();
 }
+/** Festejo del estadio: anima la tribuna (arena.js) y suena el público (crowd.js). mine = lo hizo tu equipo; si fue del rival, solo suspira cuando fue algo grande. */
+function cheerAt(sec, mine = true) { arena.cheer(sec); if (mine) Crowd.cheer(sec); else if (sec >= 1) Crowd.groan(sec); }
+function crowdCtx() {
+  const ut = netRole === 'guest' ? 1 : userTeam, sa = ut === 0 ? scoreA : scoreB, sb = ut === 0 ? scoreB : scoreA;
+  return { on: mode === 'match' && !paused && !Pause.isOpen(), lead: sa - sb, q: quarter, ball: B.holder ? (B.holder.team === ut ? 'me' : 'opp') : null, dead: !!dead, ft: !!(dead && dead.ftStage) };
+}
 function scoreFor(H, pts) {
   if (dead) { if (dead.ftLive && dead.ftStage === 'flight' && !dead.ftScored) ftMade(H); return; }
   if (mode === 'training') { trainScore(H, pts); return; }
   const team = attSign[0] === H.s ? 0 : 1, ab = (team === 0 ? teamA : teamB).ab;
-  H.done = true; if (team === 0) scoreA += pts; else scoreB += pts;
-  arena.cheer(team === 0 ? 3.2 : 1.6); for (const h of humansOn(team)) rumbleH(h, 160, 0.5);
+  H.done = true; if (team === 0) scoreA += pts; else scoreB += pts; trackPts(pts);
+  cheerAt(team === 0 ? 3.2 : 1.6, team === 0); for (const h of humansOn(team)) rumbleH(h, 160, 0.5);
   const fp = B.foulPending;
   if (fp && fp.shooter.team === team) { resolvePending(true); return; }       // canasta + falta = y uno
   say(`${ab}: ${pts === 3 ? '¡TRIPLE!' : '¡DOBLE!'}`);
@@ -408,12 +519,17 @@ async function startTraining(cfg) {
   const team = TEAMS.find(t => t.ab === cfg.team) || teamA;
   let ros; try { ros = await loadRoster(team); } catch { ros = fallbackRoster(team); }
   const p = [...ros.starters, ...ros.bench].find(x => String(x.id) === String(cfg.player)) || ros.starters[0];
+  /* Modelo 3D del jugador (players3d.js): con la camiseta del equipo usa la 1 (Icon); con la remera blanca de práctica, la 2 (Association, blanca) */
+  const trainKit = cfg.kit === 'team' ? 'icon' : 'association';
+  await P3D.prepare([{ info: p, ab: team.ab, kit: trainKit }]);
   setMode('training'); setCourt(courtById(cfg.court));
   const a = agents[0];
   if (cfg.kit === 'team') {                              // con la camiseta de su equipo (nombre y número del jugador)
     const k = kitById(team, 'icon');
     a.R.setUniformStyle?.({ jersey: k.jersey, shorts: k.shorts, accent: k.accent, trim: k.trim, details: k.details, word: nickname(team), ink: inkOf(k), decals: true }); a.R.shoeM.color.set(k.shoes);
   } else applyTrainingLook();                            // remera blanca lisa
+  a.m3k = { ab: team.ab, kit: trainKit };
+  for (const x of agents) if (x !== a) { x.m3k = null; refreshModel(x); }      // los demás no juegan: sin modelo
   setInfo(a, { ...p }); a.stam = 1; a.tired = false;
   setupHumans(null, a); B.holder = null; B.mode = 'loose';
   Object.assign(stats, { shots: 0, makes: 0, streak: 0, best: 0, xp: 0 }); pendingShot = false; updateTrainHUD();
@@ -433,7 +549,7 @@ function pauseInfo() {
   return `<div class="pz-card"><small>${QN[quarter - 1]} · ${fmt(clockT)}</small><div class="pz-score"><div><img src="${teamA.logo}" alt=""><b>${teamA.ab}</b><strong>${scoreA}</strong></div><em>–</em><div><strong>${scoreB}</strong><b>${teamB.ab}</b><img src="${teamB.logo}" alt=""></div></div><small>${scoreA === scoreB ? 'EMPATE' : `${scoreA > scoreB ? teamA.ab : teamB.ab} LIDERA POR ${Math.abs(scoreA - scoreB)}`}</small></div>${humans.length > 1 ? `<div class="pz-card pz-players"><small>JUGADORES</small>${humans.map(h => `<div style="--c:${h.color}"><i>${h.name}</i><span>${h.dev === 'kb' ? 'Teclado y mouse' : humanActive(h) ? 'Joystick' : '¡Joystick desconectado!'}</span><b>${h.team === 0 ? teamA.ab : teamB.ab}</b></div>`).join('')}</div>` : ''}`;
 }
 Pause.init({
-  canOpen: () => !paused && !PM.isOpen() && !UI.isMainOpen() && !Online.isOpen(),
+  canOpen: () => !paused && !PM.isOpen() && !UI.isMainOpen() && !Online.isOpen() && Career.isHidden() && UT.isHidden(),
   isTraining: () => mode === 'training', info: pauseInfo,
   onOpen: () => {
     if (!netRole) paused = true;                                      // online el partido NO se frena: el rival sigue jugando
@@ -448,6 +564,7 @@ Pause.init({
 function exitToMain() {
   if (netRole) { Online.quitMatch(); return; }                          // online: abandonar avisa al rival y vuelve al lobby
   paused = true; dead = null; setFade(0); document.exitPointerLock?.(); flushXp();
+  if (careerCtx) { const c = careerCtx; careerCtx = null; c.done({ abandoned: true }); return; }
   PM.closeWizard(); TS.close(); UI.showMain();
 }
 
@@ -462,6 +579,7 @@ function applyTeams() {
   for (const [t, k, tm] of [[0, kitA, teamA], [1, kitB, teamB]]) for (const a of T[t].court) {
     a.R.setUniformStyle?.({ jersey: k.jersey, shorts: k.shorts, accent: k.accent, trim: k.trim, details: k.details, word: nickname(tm), ink: inkOf(k), decals: true });
     a.R.shoeM.color.set(k.shoes);
+    a.m3k = { ab: tm.ab, kit: k.id };                            // equipo y camiseta: de ahí sale la carpeta/archivo del modelo 3D (players3d.js)
   }
   $('sbA').style.boxShadow = `inset 7px 0 0 ${stripe(kitA)}`; $('sbB').style.boxShadow = `inset -7px 0 0 ${stripe(kitB)}`;
   $('abA').textContent = teamA.ab; $('abB').textContent = teamB.ab;
@@ -474,9 +592,18 @@ function loadSetup(S) {                               // copia al juego lo que s
   styleKey = JSON.stringify(S.style);
 }
 const QN = ['1ST', '2ND', '3RD', '4TH', 'OT'];
+let m3Loading = false;
 async function startGame(S0 = null, role = null) {        // role: null = partido normal · 'host' / 'guest' = partido online
   try { await PM.ready(); } catch { /* planteles genéricos */ }
   const S = S0 || PM.getSetup();
+  /* Modelos 3D (v48): los de los 10 titulares tienen que estar cargados ANTES de arrancar (así no aparece el cuerpo de siempre un rato). Sin archivo en su carpeta, no se espera nada. */
+  const m3List = [[S.teamA, S.kitA, S.lineupA], [S.teamB, S.kitB, S.lineupB]].flatMap(([t, k, l]) => (t && k && l ? l.starters.map(info => ({ info, ab: t.ab, kit: k.id })) : []));
+  if (m3List.length) {
+    if (m3Loading) return;                                         // ya se está cargando (doble clic en Jugar)
+    m3Loading = true;
+    try { await P3D.prepare(m3List); } finally { m3Loading = false; }
+  }
+  careerCtx = S.career || null; for (const k in gpts) delete gpts[k];
   netRole = role; resetNet();
   if (role) net.pool = new Map([...S.lineupA.starters, ...S.lineupA.bench, ...S.lineupB.starters, ...S.lineupB.bench].map(p => [infoKey(p), p]));
   loadSetup(S);
@@ -484,6 +611,7 @@ async function startGame(S0 = null, role = null) {        // role: null = partid
   opts.styleB = role ? (S.styleB || null) : null; styleKeyB = JSON.stringify(S.styleB || '');
   setCourt(courtFor(S.courtTeam));                      // cancha del local o del visitante, según el menú del partido
   setMode('match'); applyTeams(); applyRosters(S.lineupA, S.lineupB);
+  Box.reset(teamA, teamB, [...S.lineupA.starters, ...S.lineupA.bench], [...S.lineupB.starters, ...S.lineupB.bench]); B.ast = null; B.reboundOf = null;
   scoreA = scoreB = 0; quarter = 1; teamFouls[0] = teamFouls[1] = 0; B.foulPending = null; for (const t of [0, 1]) [...T[t].court.map(a => a.info), ...T[t].bench].forEach(i => { i.pf = 0; }); clockT = qLen; attSign = [-1, 1]; shotClock = 24; B.possTeam = 0; B.lastTeam = 0;
   for (const a of agents) { a.stam = 1; a.tired = false; a.act = null; a.stunT = 0; a.state = 'free'; a.ai = newAIState(); a.pos.set((a.slot - 2) * 2, 0, a.team === 0 ? -4 : 4); }
   B.holder = null; B.mode = 'dead'; autoUser = false; dead = null;
@@ -493,7 +621,7 @@ async function startGame(S0 = null, role = null) {        // role: null = partid
     setupHumans(S);
   }
   if (role) PM.hideForMatch(); else PM.closeWizard();
-  paused = false; shotCounter = 0;
+  paused = false; shotCounter = 0; Crowd.setVolume(UI.settings.crowd ?? 0.8); Crowd.start();
   camMode = S.cam; cam2k.snap = true;
   if (role) { if (camMode === 2) camMode = 0; }                                  // online no hay cámara libre
   else if (multi()) { if (camMode === 2) camMode = 0; if (teamsWithHumans() > 1 && camMode === 0) camMode = 1; }     // varios jugadores: sin cámara libre; si juegan en equipos contrarios, cámara de TV (se ve parejo para los dos lados)
@@ -504,6 +632,12 @@ async function startGame(S0 = null, role = null) {        // role: null = partid
   else if (multi()) say(humans.map(h => `${h.name} ${h.dev === 'kb' ? 'teclado' : 'joystick'}`).join(' · ') + (teamsWithHumans() > 1 ? ' · ¡Versus!' : ' · ¡Cooperativo!'));
   else { say(KB.hint()); if (Pad.state.connected) say(Pad.hint()); }
 }
+Box.setContext(() => ({
+  score: [scoreA, scoreB], quarter, qLabel: QN[quarter - 1], clock: fmt(clockT),
+  onCourt: [0, 1].map(t => T[t].court.map(a => (a.info ? infoKey(a.info) : ''))),
+  training: mode === 'training' ? stats : null, player: mode === 'training' ? agents[0]?.info?.name : '',
+  hint: `Soltá ${KB.label(KB.bindings().stats?.[0])}${Pad.state.connected ? ` o ${Pad.label(Pad.bindings().stats)}` : ''} para volver al partido`,
+}));
 const cache = {};
 const setText = (id, v) => { if (cache[id] !== v) { cache[id] = v; $(id).textContent = v; } };
 const fmt = s => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -518,10 +652,12 @@ function tickGame(dt) {
   pollFoul(dt);
   if (dead) return;
   clockT -= dt;
+  if (netRole !== 'guest') for (const t of [0, 1]) for (const a of T[t].court) if (a.active) bx(a, 'sec', dt);
   if (!opts.shotClock) shotClock = 24;                              // reloj de 24 s apagado: nunca vence
   if (B.holder || B.mode === 'pass') shotClock -= dt;                // el reloj de 24 s se frena con la pelota en el aire / en rebote
-  if (shotClock <= 0 && B.holder) { say('Violación de 24 segundos'); startDead('violation', B.holder.pos.x, B.holder.pos.z, null, 1 - B.holder.team); return; }
+  if (shotClock <= 0 && B.holder) { bx(B.holder, 'tov'); say('Violación de 24 segundos'); if (B.holder.team === userTeam) Crowd.boo(0.6); startDead('violation', B.holder.pos.x, B.holder.pos.z, null, 1 - B.holder.team); return; }
   if (clockT <= 0) {
+    Crowd.horn();
     if (quarter >= 4 && scoreA !== scoreB) { clockT = 0; updateScoreboard(); finishGame(); return; }
     quarter++; teamFouls[0] = teamFouls[1] = 0; clockT = quarter > 4 ? 90 : qLen;
     const inT = quarter === 2 ? 1 : quarter === 3 ? 1 : quarter === 4 ? 0 : 0;
@@ -532,6 +668,7 @@ function tickGame(dt) {
 function finishGame() {
   const w = scoreA > scoreB;
   paused = true; document.exitPointerLock?.();
+  if (careerCtx) { const c = careerCtx; careerCtx = null; setFade(0); c.done({ scoreA, scoreB, gpts: { ...gpts }, ot: Math.max(0, quarter - 4) }); return; }      // modo carrera: el resultado vuelve a la carrera
   if (netRole === 'host') {                                                       // online: resultado para los dos (la XP se da en onMatchEnded)
     const tm = t => ({ ab: t.ab, name: t.name, logo: t.logo });
     Online.matchOver({ sa: scoreA, sb: scoreB, ta: tm(teamA), tb: tm(teamB) }); return;
@@ -565,6 +702,7 @@ function showCamName() { const el = $('camName'); el.textContent = `${CAM_NAMES[
 const kbHuman = () => (humans.length === 1 ? humans[0] : humans.find(x => x.dev === 'kb'));   // quién juega con teclado y mouse: el único humano, o el que eligió teclado (puede ser cualquier casilla, no solo J1)
 function pressAction(act, h = kbHuman()) {                       // teclado y mouse (los joysticks entran por padGame)
   if (netRole === 'guest') { guestAct(act, h); return; }
+  if (act === 'stats') { Box.setHeld('kb', true); return; }               // tabla de puntos: se ve mientras la mantenés
   if (act === 'reset') { if (mode === 'training') resetTraining(); return; }
   if (act === 'camera') { cycleCamera(); return; }
   const c = h?.agent; if (!c) return;
@@ -574,7 +712,7 @@ function pressAction(act, h = kbHuman()) {                       // teclado y mo
   else if (act === 'switch') switchPlayer(h);
   else if (act === 'dribble') humanCrossover(h);
 }
-function releaseAction(act, h = kbHuman()) { if (netRole === 'guest') { guestRelease(act, h); return; } const c = h?.agent; if (act === 'shoot' && c?.state === 'charge') releaseCharge(c); }
+function releaseAction(act, h = kbHuman()) { if (act === 'stats') { Box.setHeld('kb', false); return; } if (netRole === 'guest') { guestRelease(act, h); return; } const c = h?.agent; if (act === 'shoot' && c?.state === 'charge') releaseCharge(c); }
 document.addEventListener('keydown', e => {
   if (KB.captureKey(e)) return;                       // ← en Controles esperando una tecla nueva
   if (typing(e)) return;                              // ← escribiendo en un campo (email, contraseña…): el juego no toca ninguna tecla
@@ -588,9 +726,10 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => {
   const acts = KB.actionsOf(e.code); KB.set(e.code, false);
+  if (acts.includes('stats')) Box.setHeld('kb', false);              // soltar Tab siempre cierra la tabla, aunque se haya abierto la pausa en el medio
   if (!paused) for (const act of acts) releaseAction(act);
 });
-addEventListener('blur', () => KB.releaseAll());
+addEventListener('blur', () => { KB.releaseAll(); Box.releaseAll(); });
 addEventListener('gamepaddisconnected', e => {            // se desconectó el joystick de un jugador: se pausa y su jugador lo maneja la IA hasta que vuelva
   const h = humans.find(x => x.dev === 'pad' && x.pad === e.gamepad.index);
   if (h && multi()) { h.connected = false; say(`Se desconectó el joystick de ${h.name}. Volvé a conectarlo y apretá un botón.`); if (!paused) openPause(); }
@@ -600,7 +739,27 @@ addEventListener('gamepadconnected', e => {               // si vuelve (con otro
   const h = humans.find(x => x.dev === 'pad' && !(navigator.getGamepads?.()[x.pad]?.connected));
   if (h && multi()) { h.pad = e.gamepad.index; h.connected = true; say(`Joystick de ${h.name} reconectado.`); }
 });
-addEventListener('beforeunload', e => { if (!paused && mode === 'match') { e.preventDefault(); e.returnValue = ''; } });   // por si Ctrl+W te cierra la pestaña sin querer
+/* ---- guardado: todo se guarda solo (al cerrar, al ocultar la pestaña y cada 30 s) + aviso al cerrar jugando ---- */
+function saveAll() { try { flushXp(); } catch { /* sin red */ } UT.saveNow(); Career.saveNow(); }
+const playing = () => (!paused && mode === 'match') || !UT.isHidden() || !Career.isHidden();
+let saveNote = null, saveNoteT = 0;
+function showSaveNote() {                                          // si te quedás en la página después del aviso del navegador
+  if (!saveNote) {
+    saveNote = document.createElement('div'); saveNote.id = 'saveNote';
+    saveNote.innerHTML = '<b>Guardá tu progreso antes de cerrar</b><span id="saveNoteMsg">Se guarda solo, pero podés guardarlo ahora.</span><button type="button" id="saveNoteBtn">GUARDAR</button><button type="button" id="saveNoteX" aria-label="Cerrar">✕</button>';
+    document.body.appendChild(saveNote);
+    saveNote.querySelector('#saveNoteBtn').onclick = () => { saveAll(); saveNote.querySelector('#saveNoteMsg').textContent = '✓ Progreso guardado'; clearTimeout(saveNoteT); saveNoteT = setTimeout(() => { saveNote.hidden = true; }, 1600); };
+    saveNote.querySelector('#saveNoteX').onclick = () => { saveNote.hidden = true; };
+  }
+  saveNote.querySelector('#saveNoteMsg').textContent = 'Se guarda solo, pero podés guardarlo ahora.'; saveNote.hidden = false;
+}
+addEventListener('beforeunload', e => {                            // el texto del aviso lo fija el navegador; antes de que aparezca, ya se guardó todo
+  saveAll();
+  if (playing()) { e.preventDefault(); e.returnValue = ''; setTimeout(showSaveNote, 400); }   // si el aviso se cancela (te quedás), este timer sí corre
+});
+addEventListener('pagehide', saveAll);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveAll(); });
+setInterval(() => { if (playing()) saveAll(); }, 30000);
 const onUI = e => !!e.target.closest?.('button, input, select, label, #pm, #main, #auth, #settings, #pause, #controls');
 document.addEventListener('contextmenu', e => { if (!paused) e.preventDefault(); });
 document.addEventListener('mousedown', e => {
@@ -716,7 +875,7 @@ const _tv = V3(), _dv = V3(), _hp = V3();
 function startCharge(a) {
   if (a.state !== 'dribble' || B.holder !== a || !a.grounded || (dead && !(dead.ftStage === 'aim' && dead.ftShooter === a)) || inbound || a.act) return false;
   a.aimHoop = mode === 'training' ? facingHoop(a) : attackHoop(a.team);
-  a.state = 'charge'; a.charge = 0; a.chargeDir = 1; a.side = 1; a.shotId = ++shotCounter; return true;
+  a.state = 'charge'; a.charge = 0; a.chargeDir = 1; a.chargeMul = chargeTarget(a); a.side = 1; a.shotId = ++shotCounter; return true;
 }
 function releaseCharge(a) {
   if (a.state !== 'charge') return;
@@ -739,6 +898,19 @@ function contestOf(a) {                                // 0..1 qué tan marcado 
     best = Math.max(best, clamp(c, 0, 1));
   }
   return a.sbT > 0 ? best * 0.45 : best;                 // después de un stepback queda más libre
+}
+/* Velocidad de la barra de tiro (v50): multiplica CHARGE_SPEED. Más alto = la barra corre más rápido = más difícil soltar en la línea blanca.
+   · Triple: base más rápida (×1.28) que un tiro normal.
+   · Rating de la zona (triple / media distancia / cerca): 99 → ~×0.77 · 70 → ×1 · 40 → ~×1.24. Cuanto mejor tirador, más lenta (más fácil).
+   · Gente encima: hasta +45 % con un defensor pegado de frente; libre = sin recargo. Cansado: +10 %.
+   · Tiros libres: base ×1.10 y depende del rating de tiro libre (90 → ×0.99 · 50 → ×1.22). */
+function chargeTarget(a) {
+  const info = a.info || {}, H = a.aimHoop || attackHoop(a.team);
+  if (a.ftShot) return clamp(1.1 + (70 - (info.ft ?? 70)) * 0.006, 0.95, 1.4) * (a.tired ? 1.1 : 1);
+  const d = Math.hypot(a.pos.x, H.hz - a.pos.z), three = d > 7.24 || Math.abs(a.pos.x) >= 6.7;
+  const rating = clamp(1 - (zoneRating(info, three, d) - 70) * 0.008, 0.7, 1.35);
+  const open = 1 + (a.aimHoop ? contestOf(a) : 0) * 0.45;
+  return clamp((three ? 1.28 : 1) * rating * open * (a.tired ? 1.1 : 1), 0.6, 2.1);
 }
 function aiShoot(a) {                                  // el bot decide tirar: la calidad del tiro define si el "disparo" sale perfecto o errado
   if (!startCharge(a)) return false;
@@ -793,6 +965,7 @@ function startDunk(a, H, dmode, kind) {
   const cst = contestOf({ ...a, aimHoop: H, pos: a.pos, team: a.team }), hard = (L && ds?.hard) || 0;
   D.miss = L && Math.random() < (isHum(a) ? clamp((72 - a.info.layup) * 0.005 + cst * 0.4 * (1.25 - 0.5 * clamp((a.info.strength - 25) / 74, 0, 1)), 0, 0.7) : clamp(0.28 - (a.info.layup - 70) * 0.006 - (prof(a).acc - 1) * 0.2 + cst * 0.4 * (1.25 - 0.5 * clamp((a.info.strength - 25) / 74, 0, 1)), 0.04, 0.7)) + hard;
   hoops.forEach(h => h.done = false); if (a === ctrl) attempt();
+  bx(a, 'fga'); B.reboundOf = null;                                   // mates y bandejas cuentan como intento al empezar (aunque los tapen)
   if (!L) rollShootingFoul(a, 'dunk', false, H);
 }
 function updateDunk(a, dt) {
@@ -850,6 +1023,7 @@ function resolveDunkBlock(s, d) {                      // el defensor llegó a l
   const foul = !B.foulPending && Math.random() < clamp((blocked ? 0.30 : 0.22) + (rs - rb) / 400, 0.1, 0.5);
   if (foul) { B.foulPending = { type: lay ? 'layup' : 'dunk', shooter: s, fouler: d, three: false, age: 0 }; whistle(); say(blocked ? `¡TAPÓN con falta de ${lastN(d)} sobre ${lastN(s)}!` : `¡Falta de ${lastN(d)} sobre ${lastN(s)}!`); }
   if (!blocked) { d.blkHit = 0.3; return; }                   // lo rozó: el mate sigue (y si entra, es un y-uno)
+  if (!foul) bx(d, 'blk');
   D.rd = true;                                                // tapón: la pelota sale despedida hacia afuera del aro
   const away = V3(s.pos.x, 0, s.pos.z - D.H.hz); if (away.lengthSq() < 1e-4) away.set(0, 0, -D.H.s); away.normalize();
   const side = V3(-away.z, 0, away.x).multiplyScalar((Math.random() - 0.5) * 3.2);
@@ -859,7 +1033,7 @@ function resolveDunkBlock(s, d) {                      // el defensor llegó a l
   s.vy = D.JH * 4 * (1 - 2 * clamp((D.t - TW) / D.TF, 0, 1)) / D.TF; s.vel.copy(away).multiplyScalar(-1.2);
   d.blkHit = 0.45;
   if (!foul) say(lay ? `¡TAPÓN de ${lastN(d)} a ${lastN(s)}!` : `¡TAPÓN de ${lastN(d)} al mate de ${lastN(s)}!`);
-  arena.cheer(d.team === userTeam ? 2.4 : 0.9);
+  cheerAt(d.team === userTeam ? 2.4 : 0.9, d.team === userTeam);
 }
 /* ---- pase ---- */
 /* Pases con lujo (L2 + pasar, o al azar con los bots buenos pasadores): wind = lo que tarda el movimiento antes de soltar la pelota, err = cuánto aumenta el error del pase */
@@ -893,7 +1067,7 @@ function launchPass(a, t, style) {
   }
   if (!style) { a.act = 'pass'; a.actT = 0.32; }
   a.state = 'free';
-  B.holder = null; B.mode = 'pass'; B.passer = a; B.target = t; B.rolled = new Set(); B.passT = 0; B.bn = bn; B.noPick = { a, t: 0.2 }; B.lastTeam = a.team; B.lastTouch = a;
+  B.holder = null; B.mode = 'pass'; B.passer = a; B.target = t; B.rolled = new Set(); B.passT = 0; B.bn = bn; B.noPick = { a, t: 0.2 }; B.lastTeam = a.team; B.lastTouch = a; B.ast = { from: a, to: t, t: gameTime };
   BP.copy(from); BV.copy(v); if (bw) BW.set(bw[0], bw[1], bw[2]); else BW.set(0, 0, 0); inbound = false;
   if (isHum(a) && autoFollow(a.team)) { takeAgent(a.hum, t); a.hum && (a.hum.lock = 0); }   // con un solo humano en el equipo, el control viaja con la pelota
   return true;
@@ -953,13 +1127,14 @@ function resolveSteal(a) {
   if (oppTeam(h.team)) p *= prof(h).protect > 1 ? 1 / prof(h).protect : 2 - prof(h).protect;
   p = clamp(p, 0.04, 0.8);
   if (Math.random() < p) {
+    bx(a, 'stl'); bx(h, 'tov');
     const clean = Math.random() < 0.55;
     if (clean) { say(`¡Robo de ${a.info.name.split(' ').slice(-1)[0]}!`); B.holder = null; B.mode = 'loose'; giveBall(a, 'steal'); }
     else {
       say('¡Pelota suelta!'); B.holder = null; B.mode = 'loose'; h.state = 'free'; h.act = null; h.stunT = 0.4;
       BV.set(Math.sin(a.h) * 3.2 + (Math.random() - 0.5), 2.2, Math.cos(a.h) * 3.2 + (Math.random() - 0.5)); B.noPick = { a: h, t: 0.35 }; B.lastTeam = h.team;
     }
-    arena.cheer(a.team === userTeam ? 1.2 : 0.5);
+    cheerAt(a.team === userTeam ? 1.2 : 0.5, a.team === userTeam);
   } else a.stunT = 0.55;                                // robo fallido: queda fuera de posición un instante
 }
 function startBlock(a, kind) {
@@ -1043,7 +1218,8 @@ function updateAgent(a, dt, I) {
   }
   if (a.jumpWind > 0) { a.jumpWind -= dt; if (a.jumpWind <= 0) { a.vy = 4.2 * (a.jumpM ?? 1); a.grounded = false; } }
   if (a.state === 'charge') {
-    a.charge += a.chargeDir * CHARGE_SPEED * dt;
+    if (isHum(a)) a.chargeMul += (chargeTarget(a) - (a.chargeMul || 1)) * Math.min(1, dt * 4);      // sigue a la situación (un defensor que se acerca acelera la barra) pero sin saltos bruscos
+    a.charge += a.chargeDir * CHARGE_SPEED * (a.chargeMul || 1) * dt;
     if (a.charge >= 1) { a.charge = 1; a.chargeDir = -1; } if (a.charge <= 0) { a.charge = 0; a.chargeDir = 1; }
     if (a === ctrl) updatePowerUI();
   }
@@ -1328,7 +1504,7 @@ function stepBall(h) {
       if (dd < m && dd > 1e-6) {
         _t.multiplyScalar(1 / dd); BP.copy(_c).addScaledVector(_t, m); contact(_t, 0.5, 0.4);
         BV.y = Math.min(BV.y, 1.5); BV.addScaledVector(_t, 3);
-        B.mode = 'loose'; B.lastTeam = d.team; B.lastTouch = d; d.blkHit = 0.45; say(`¡TAPÓN de ${d.info.name.split(' ').slice(-1)[0]}!`); arena.cheer(d.team === userTeam ? 2.2 : 0.8);
+        bx(d, 'blk'); B.mode = 'loose'; B.lastTeam = d.team; B.lastTouch = d; d.blkHit = 0.45; say(`¡TAPÓN de ${d.info.name.split(' ').slice(-1)[0]}!`); cheerAt(d.team === userTeam ? 2.2 : 0.8, d.team === userTeam);
         hoops.forEach(hh => hh.done = hh.done && false);
         break;
       }
@@ -1336,12 +1512,12 @@ function stepBall(h) {
   }
   for (const H of hoops) {
     const n = _p.set(0, 0, -H.s), dn = (BP.z - H.front) * -H.s;
-    if (dn < BR && dn > -0.15 && Math.abs(BP.x) < 0.95 && BP.y > 2.85 && BP.y < 4.02) { BP.z = H.front - H.s * BR; contact(n, 0.62, 0.45); if (B.mode === 'shot') B.mode = 'loose'; }
+    if (dn < BR && dn > -0.15 && Math.abs(BP.x) < 0.95 && BP.y > 2.85 && BP.y < 4.02) { BP.z = H.front - H.s * BR; contact(n, 0.62, 0.45); if (B.mode === 'shot') { B.mode = 'loose'; Crowd.rim(); } }
     const dx = BP.x, dz = BP.z - H.hz, rad = Math.hypot(dx, dz);
     if (rad > 1e-6 && rad < 0.7 && Math.abs(BP.y - RIM_Y) < 0.3) {
       _c.set(dx * RIM_C / rad, RIM_Y, H.hz + dz * RIM_C / rad);
       _t.copy(BP).sub(_c); const d = _t.length(), m = BR + RIM_TUBE;
-      if (d < m && d > 1e-6) { _t.multiplyScalar(1 / d); BP.copy(_c).addScaledVector(_t, m); contact(_t, 0.6, 0.35); if (B.mode === 'shot') B.mode = 'loose'; }
+      if (d < m && d > 1e-6) { _t.multiplyScalar(1 / d); BP.copy(_c).addScaledVector(_t, m); contact(_t, 0.6, 0.35); if (B.mode === 'shot') { B.mode = 'loose'; Crowd.rim(); } }
     }
     if (!H.done && prevY > RIM_Y && BP.y <= RIM_Y && rad < RIM_IN - 0.005 && (B.mode === 'shot' || B.mode === 'loose' || mode === 'training')) scoreFor(H, B.shotThree ? 3 : 2);
     if (rad < 0.25 && BP.y < RIM_Y + 0.02 && BP.y > RIM_Y - 0.45) BV.multiplyScalar(1 - 6 * h);
@@ -1368,6 +1544,7 @@ function solveShot(p0, target, dir, dist, thOver, spin = 18) {   // resuelve la 
 function launchFromHolder(a, H, dist, three = false) {  // la pelota deja la mano: pasa a "tiro en el aire"
   B.shotThree = three; B.holder = null; B.mode = 'shot'; B.shooter = a; B.shotHoop = H; B.shotDist = dist; B.shotId++; B.passT = 0; B.noPick = { a, t: 0.5 };
   B.lastTeam = a.team; B.lastTouch = a; B.possTeam = a.team;
+  if (a.ftShot) bx(a, 'fta'); else if (a.state !== 'dunk') { bx(a, 'fga'); if (three) bx(a, 'tpa'); B.reboundOf = a; }      // bandejas y mates ya se contaron al empezar (startDunk)
 }
 function releaseBall(a) {
   a.released = true; hoops.forEach(h => h.done = false); if (a === ctrl) attempt();
@@ -1463,6 +1640,7 @@ function dribbleControl(a) {
 }
 function giveBall(a, how) {            // alguien agarra la pelota
   const was = B.mode;
+  if (how === 'rebound' && B.reboundOf) bx(a, 'reb'); B.reboundOf = null;
   B.holder = a; B.mode = 'held'; B.lastTeam = a.team; B.lastTouch = a; B.passer = null; B.target = null; B.shooter = null;
   a.state = 'dribble'; a.charge = 0; a.released = false; a.launched = false; a.act = null; a.passQ = null; a.ai.holdT = 0; a.ai.plan = 'drive'; a.ai.think = 0.15; a.ai.inb = false;
   BV.set(a.vel.x, Math.min(BV.y * 0.3, 0), a.vel.z); if (a === ctrl) updatePowerUI();       // al agarrarla pierde la velocidad del pase
@@ -1498,7 +1676,7 @@ function pickups() {                   // quién agarra la pelota (rebotes, pase
     } else sc = 1 / (d + 0.15) + Math.random() * 0.6 + (a.info.detailed ? reboundScore(a.info, a.team === B.possTeam, a.scale) : (a.info.rebound - 70) * 0.01);
     if (sc > bs) { bs = sc; best = a; }
   }
-  if (best) giveBall(best, B.mode === 'pass' ? (best === B.target ? 'pass' : 'steal') : 'rebound');
+  if (best) { if (B.mode === 'pass' && best !== B.target) { bx(best, 'stl'); bx(B.passer, 'tov'); } giveBall(best, B.mode === 'pass' ? (best === B.target ? 'pass' : 'steal') : 'rebound'); }
 }
 function ballLogic(dt) {
   if (dead && dead.phase >= 1 && !dead.ftLive) return;                 // el árbitro tiene la pelota
@@ -1520,7 +1698,7 @@ function ballLogic(dt) {
   pickups();
   if (!dead && !B.holder && (ballOut || Math.abs(BP.x) > ARENA.BX - 0.2 || Math.abs(BP.z) > ARENA.BZ - 0.2 || BP.y > 24)) {
     if (mode === 'training') recallBall();
-    else if (!resolvePending(false)) startDead('out', BP.x, BP.z, 'Pelota afuera', 1 - B.lastTeam);
+    else if (!resolvePending(false)) { if (!B.reboundOf && B.mode !== 'shot' && B.lastTouch && B.lastTouch.team === B.lastTeam) bx(B.lastTouch, 'tov'); startDead('out', BP.x, BP.z, 'Pelota afuera', 1 - B.lastTeam); }
   }
   ballOut = false;
 }
@@ -1547,7 +1725,7 @@ function whistle() {
 }
 function startDead(kind, a = 0, b = 0, msg, inTeam = 0, opts = {}) {
   if (dead) return;
-  B.foulPending = null;
+  B.foulPending = null; B.reboundOf = null;
   if (B.holder) { B.holder.state = 'free'; B.holder.released = true; B.holder.charge = 0; B.holder = null; }
   for (const p of agents) if (p.state === 'charge' || p.state === 'shoot') { p.state = 'free'; p.released = true; p.charge = 0; }
   updatePowerUI();
@@ -1563,6 +1741,7 @@ function checkPlayerOut() {
   const h = B.holder; if (!h) return;
   if (inbound) { if (!outsideLines(h.pos.x, h.pos.z, -0.2)) inbound = false; return; }     // hasta que entra a la cancha no cuenta como "afuera"
   const holds = h.state === 'dribble' || h.state === 'charge' || (h.state === 'shoot' && !h.released);
+  if (holds && h.grounded && outsideLines(h.pos.x, h.pos.z, 0.1)) bx(h, 'tov');
   if (holds && h.grounded && outsideLines(h.pos.x, h.pos.z, 0.1)) startDead('out', h.pos.x, h.pos.z, '¡Saliste de la cancha con la pelota!', 1 - h.team);
 }
 function handTarget(a, out) {
@@ -1608,6 +1787,8 @@ function commitFoul(f) {
   if (dead || mode !== 'match') return;
   const fl = f.fouler, vc = f.victim, x = f.x ?? BP.x, z = f.z ?? BP.z;
   fl.info.pf = (fl.info.pf || 0) + 1;
+  if (f.type !== 'technical') bx(fl, 'pf'); if (f.type === 'offensive') bx(fl, 'tov');
+  if (f.type === 'shooting' && !f.made && vc) { bx(vc, 'fga', -1); if (f.three) bx(vc, 'tpa', -1); }      // falta sobre el que tira y no entra: no cuenta como intento
   const counts = f.type === 'shooting' || f.type === 'reach';          // técnicas y faltas en ataque no suman faltas de equipo
   if (counts) teamFouls[fl.team]++;
   const bonus = counts && teamFouls[fl.team] > (quarter > 4 ? 3 : 4);
@@ -1722,8 +1903,8 @@ function aiFreeThrow(a) {                                                // los 
 function ftMade(H) {
   const d = dead, sh = d.ftShooter;
   d.ftScored = true; d.ftScoredT = d.stageT; H.done = true;
-  if (sh.team === 0) scoreA++; else scoreB++;
-  arena.cheer(1.5); say('¡TIRO LIBRE CONVERTIDO!');
+  if (sh.team === 0) scoreA++; else scoreB++; trackPts(1, sh, true);
+  cheerAt(sh.team === userTeam ? 1.5 : 0.8, sh.team === userTeam); say('¡TIRO LIBRE CONVERTIDO!');
 }
 function ftEnd(d, madeLast) {
   const set = d.fts[d.ftSet], sh = set.shooter;
@@ -1731,7 +1912,7 @@ function ftEnd(d, madeLast) {
   if (set.tech) { d.inTeam = d.techIn; d.spot = d.techSpot; }
   else if (madeLast) { d.inTeam = 1 - sh.team; d.spot = restartSpot('score', d.ftHoop.s, 0); }
   else {                                                                 // erró el último libre: pelota viva, ¡rebote!
-    dead = null; B.mode = 'loose'; B.holder = null; B.noPick = { a: null, t: 0 }; B.possTeam = sh.team; B.lastTeam = sh.team; B.lastTouch = sh;
+    dead = null; B.mode = 'loose'; B.holder = null; B.noPick = { a: null, t: 0 }; B.possTeam = sh.team; B.lastTeam = sh.team; B.lastTouch = sh; B.reboundOf = sh;
     hoops.forEach(h => { h.done = false; }); shotClock = 24; setFade(0);
     for (const a of agents) { a.ai = newAIState(); a.state = a.state === 'shoot' ? 'free' : a.state; }
     say('Tiro libre fallado · ¡rebote!'); return;
@@ -1965,6 +2146,7 @@ function buildSnap() {
     g: [scoreA, scoreB, quarter, r2(clockT), r2(shotClock), attSign[0], B.possTeam | 0, d ? 1 : 0, d?.ftShooter ? idxOf(d.ftShooter) : -1, d?.ftHoop ? d.ftHoop.s : 0, r2(fadeV)],
     r: [r3(R3.root.position.x), r3(R3.root.position.z), r3(R3.root.rotation.y), ...JK.map(k => r3(J3[k]))],
     c: humans.map(h => idxOf(h.agent)),
+    ...(net.n % 10 === 1 ? { x: Box.pack() } : {}),             // resumen de la tabla de puntos (2 veces por segundo)
   };
 }
 function hostNetTick(dt) {
@@ -2008,6 +2190,7 @@ function setupGuestHumans(S) {
   buildMpHud();
 }
 function ingestSnap(sn) {                                // lo que no se interpola: quién es cada jugador (cambios de suplentes)
+  if (sn.x) Box.unpack(sn.x);
   sn.a.forEach((row, i) => {
     const key = row[8]; if (typeof key !== 'string' || !key) return;
     const a = agents[i]; if (infoKey(a.info) === key) return;
@@ -2029,7 +2212,7 @@ function viewerStep(dt) {
   _qa.set(ba[3], ba[4], ba[5], ba[6]); _qb.set(bb[3], bb[4], bb[5], bb[6]); ball.quaternion.copy(_qa).slerp(_qb, k);
   B.holder = bb[7] >= 0 ? agents[bb[7]] : null; B.mode = MODES[bb[8]] || 'loose';
   const g = Bk.g;
-  if (net.lastScore && (g[0] !== net.lastScore[0] || g[1] !== net.lastScore[1])) arena.cheer(2.4);
+  if (net.lastScore && (g[0] !== net.lastScore[0] || g[1] !== net.lastScore[1])) cheerAt(2.4, g[1] !== net.lastScore[1]);
   net.lastScore = [g[0], g[1]];
   scoreA = g[0]; scoreB = g[1]; quarter = g[2]; clockT = g[3]; shotClock = g[4]; attSign = [g[5], -g[5]]; B.possTeam = g[6];
   dead = g[7] ? { phase: 0, ftShooter: g[8] >= 0 ? agents[g[8]] : null, ftHoop: g[9] ? { s: g[9] } : null } : null;
@@ -2042,11 +2225,12 @@ function viewerStep(dt) {
   ctrl = humans[1].agent;
   const me = ctrl;
   if (net.lc) {                                                                       // barra de tiro propia: corre acá, sin esperar a la red (se manda la carga al soltar)
-    const lc = net.lc; lc.v += lc.dir * CHARGE_SPEED * dt; if (lc.v >= 1) { lc.v = 1; lc.dir = -1; } if (lc.v <= 0) { lc.v = 0; lc.dir = 1; }
+    const lc = net.lc; lc.v += lc.dir * CHARGE_SPEED * (lc.mul || 1) * dt; if (lc.v >= 1) { lc.v = 1; lc.dir = -1; } if (lc.v <= 0) { lc.v = 0; lc.dir = 1; }
     if (me._ss === 'shoot' || me._ss === 'dunk' || (performance.now() - lc.t > 450 && me._ss !== 'charge')) net.lc = null;
     else { me.state = 'charge'; me.charge = lc.v; }
   }
 }
+function guestChargeMul(me) { try { return chargeTarget(me); } catch { return 1; } }       // el invitado calcula la velocidad de su propia barra con la misma regla
 function netInputOf(h) {
   const inp = inputOf(h), w = humanDir(h), P = inp.P || NO_PAD, kd = inp.kb ? KB.down : () => false;
   const sprint = kd('sprint') || !!P.down.sprint, keyMove = kd('up') || kd('down') || kd('left') || kd('right');
@@ -2069,7 +2253,7 @@ function guestSend(k, extra) { Online.sendGame({ t: 'A', k, ...extra }, true); }
 function guestAct(act, h) {                                                           // botones del invitado: se mandan al anfitrión
   const me = h?.agent; if (!me) return;
   if (act === 'camera') { cycleCamera(); return; }
-  if (act === 'shoot') { if (B.holder === me && me._ss === 'dribble' && !net.lc) net.lc = { v: 0, dir: 1, t: performance.now() }; guestSend('shoot'); }
+  if (act === 'shoot') { if (B.holder === me && me._ss === 'dribble' && !net.lc) net.lc = { v: 0, dir: 1, t: performance.now(), mul: guestChargeMul(me) }; guestSend('shoot'); }
   else if (act === 'pass') { if (B.holder === me) guestSend('pass', { fl: modHeld(h) ? 1 : 0 }); else if (h.dev === 'pad') guestSend('switch'); }
   else if (act === 'steal') guestSend('steal');
   else if (act === 'switch') guestSend('switch');
@@ -2234,20 +2418,40 @@ function frame() {
   const sep = mode === 'match' && (humans.length > 1 || own);        // varios jugadores: cada joystick lee solo a su dueño
   if (sep) for (const h of humans) if (h.dev === 'pad') { h.P = Pad.readPad(h.pad); h.connected = h.P.connected; }
   if (PM.isOpen()) for (const j of Pad.joinPollAll()) PM.onJoin?.(j);
-  if (paused || Pause.isOpen()) { if (!PM.onPad(PS)) Pad.menuNav(PS); Pause.onPad(PS); }
+  if (paused || Pause.isOpen()) { if (!PM.onPad(PS) && !UI.onPad(PS)) Pad.menuNav(PS); Pause.onPad(PS); UT.onPad(PS); Career.onPad(PS); }
   else if (!sep) padGame(PS, dt);
   else for (const h of humans) if (h.dev === 'pad' && h.P?.connected && !paused) padGame(h.P, dt, h);
   if (!paused) { if (netRole === 'guest') viewerStep(dt); else stepGame(dt); }
   if (netRole !== 'guest') updateRef(dt);
-  arena.update(dt);
+  arena.update(dt); Crowd.tick(dt, crowdCtx());
   if (netRole === 'host' && !paused) hostNetTick(dt); else if (netRole === 'guest' && !paused) guestNetTick(dt);
   updateCamera(dt); updateScoreboard(); updateHUD();
   hoops.forEach(h => h.net(dt));
-  if (!UI.isMainOpen() && !PM.isOpen() && !TS.isOpen() && !Online.isOpen()) renderer.render(scene, camera);   // con el menú previo abierto no hace falta dibujar la cancha de atrás
+  const padStats = !!PS.down?.stats || humans.some(h => h.dev === 'pad' && h.P?.down?.stats);      // ← de la cruceta (configurable): tabla de puntos mientras se mantiene
+  Box.setAllowed(!paused && !Pause.isOpen() && !PM.isOpen() && !UI.isMainOpen() && !TS.isOpen() && !Online.isOpen() && Career.isHidden() && UT.isHidden());
+  Box.setHeld('pad', padStats); Box.tick();
+  if (!UI.isMainOpen() && !PM.isOpen() && !TS.isOpen() && !Online.isOpen() && UT.isHidden()) renderer.render(scene, camera);   // con el menú previo abierto no hace falta dibujar la cancha de atrás
 }
 Online.init({ onBack: () => UI.showMain(), onNeedLogin: () => { signOut().then(() => UI.showAuth()); }, onMatchStart: (S, role) => startGame(S, role), onGame: onNetGame, onMatchStop: stopOnlineMatch, onMatchEnded });
 PM.init({ onPlay: startGame, onExit: exitToMain, onOnlineChange: p => Online.sendPick(p), onOnlineReady: r => Online.setReady(r), onOnlineStart: () => Online.hostStart(), onOnlineLeave: () => Online.leave() }); bindButtons(); loadSetup(PM.getSetup()); applyTeams(); setMode('match'); agents.forEach(a => a.active && pose(a, 0.016)); frame();
-UI.boot({ onTraining: () => openTrainSetup(false), onCasual: openCasual, onOnline: openOnline });
+function openCareer() {                                                              // Modo carrera DT: el menú de carrera ocupa la pantalla; los partidos se juegan en 3D y devuelven el resultado
+  paused = true;
+  Career.open({
+    play: S => new Promise(res => { S.career = { done: r => { res(r); } }; startGame(S); }),
+    onExit: () => UI.showMain(),
+  });
+}
+function openUltimate() {                                                            // Ultimate Team: cartas, sobres, mercado y partidos 3D con tu plantilla (ultimate/)
+  paused = true;
+  UT.open({
+    baseSetup: () => PM.getSetup(),                                                // dispositivo de control, cámara y estilo que ya elegiste en el casual
+    play: S => new Promise(res => { S.career = { done: r => res(r) }; startGame(S).catch(e => { console.error(e); res({ error: e }); }); }),
+    onExit: () => UI.showMain(),
+  });
+}
+UI.boot({ onTraining: () => openTrainSetup(false), onCasual: openCasual, onOnline: openOnline, onCareerCoach: openCareer, onUltimate: openUltimate });
+Boot.task(PM.ready().catch(() => {}), 'Cargando planteles…', 2);        // pantalla de carga (boot.js): espera también los planteles
+Boot.finish();
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
 });

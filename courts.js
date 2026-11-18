@@ -8,6 +8,8 @@ import { TEAMS } from './teams.js';
    Para agregar una cancha nueva:
      1) copiá el bloque de IND (o GSW) y cambiá los datos;
      2) agregalo al arreglo REAL de abajo.
+   Con `model` (GSW, SAS, HOU, CHA, LAL) la cancha usa un GLB calibrado en assets/: el piso 3D reemplaza al parquet, las líneas, la pintura y el logo del centro que dibuja el juego
+   (los datos de `surface`, `logo` y `floorTexts` de esos equipos quedan como respaldo por si el GLB no carga). Para sumar otra: python3 tools/calibrar_cancha.py <archivo>.glb <ab> (ver README).
    Los equipos que todavía no tienen cancha propia usan una cancha genérica con sus colores y su escudo.
    ========================================================================== */
 
@@ -23,6 +25,7 @@ const GSW = {
   paint: '#1D428A', paintRough: 0.5,
   logo: { team: 'GSW', size: 3.3 },
   floorTexts: [],
+  model: 'assets/gsw_court.glb', apron: '#ffc324',      // cancha 3D (piso con líneas y logos + soportes de los aros); apron = color del contorno
   led: { text: 'WARRIORS  ★  CHASE CENTER  ★  GOLDEN STATE  ★  STRENGTH IN NUMBERS  ★  ', bg: '#1D428A', fg: '#FFC72C', accent: '#FFC72C' },
   seats: { lower: '#2457b5', upper: '#17336f', accent: '#FFC72C' },
   crowd: [['#FFC72C', 0.42], ['#1D428A', 0.22], ['#f2f2f2', 0.14], ['#ffd96b', 0.06], ['#15171c', 0.06], ['#8b95a5', 0.10]],
@@ -58,6 +61,7 @@ const IND = {
    los avispones chicos en las esquinas y el cartel \"Spectrum CENTER\" sobre el parquet. Butacas negras. */
 const CHA = {
   id: 'CHA', team: 'CHA', arena: 'Spectrum Center', city: 'Charlotte', real: true,
+  model: 'assets/cha_court.glb', apron: '#007f94',     // cancha 3D calibrada (igual que la de los Warriors): piso con líneas y logos + soportes y tableros; apron = color del contorno
   floor: { h: 37, s: 50, l: 70, jitter: 5 },
   paint: '#0f93a6', paintRough: 0.5,
   logo: { team: 'CHA', size: 5.4 },
@@ -119,6 +123,7 @@ const UTA = {
    trofeo dorado en el centro y \"Frost Bank CENTER\" sobre el parquet. Tribuna oscura de plateados y negros. */
 const SAS = {
   id: 'SAS', team: 'SAS', arena: 'Frost Bank Center', city: 'San Antonio', real: true,
+  model: 'assets/sas_court.glb', apron: '#111113',     // cancha 3D calibrada (igual que la de los Warriors): piso con líneas y logos + soportes y tableros; apron = color del contorno
   floor: { h: 38, s: 40, l: 80, jitter: 4 },
   paint: '#0b0b0d', paintRough: 0.5, lineColor: '#121214', edgeColor: '#f2f2f2',
   logo: { team: 'SAS', img: 'SAS_SPUR', size: 2.9 },
@@ -148,6 +153,7 @@ const SAS = {
    parquet, logos dorados chicos y \"LAKERS\" violeta en las líneas de fondo. Tribuna violeta y dorada. */
 const LAL = {
   id: 'LAL', team: 'LAL', arena: 'Staples Center', city: 'Los Ángeles', real: true,
+  model: 'assets/lal_court.glb', apron: '#f8b422',     // cancha 3D calibrada (igual que la de los Warriors): piso con líneas y logos + soportes y tableros; apron = color del contorno
   floor: { h: 44, s: 50, l: 81, jitter: 4 },
   paint: '#5b2a91', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
   logo: { team: 'LAL', size: 4.6 },
@@ -205,6 +211,7 @@ const CLE = {
    fondo, tribuna roja y público de rojo. */
 const HOU = {
   id: 'HOU', team: 'HOU', arena: 'Toyota Center', city: 'Houston', real: true,
+  model: 'assets/hou_court.glb', apron: '#ce1040',     // cancha 3D calibrada (igual que la de los Warriors): piso con líneas y logos + soportes y tableros; apron = color del contorno
   floor: { h: 40, s: 62, l: 68, jitter: 5 },
   paint: '#c4122f', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
   logo: { team: 'HOU', size: 4.6 },

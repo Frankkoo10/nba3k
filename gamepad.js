@@ -10,6 +10,7 @@ export const ACTIONS = [
   { id: 'switch',  label: 'Cambiar de jugador',                                      def: 4 },
   { id: 'camera',  label: 'Cambiar cámara',                                          def: 8 },
   { id: 'menu',    label: 'Pausa',                                                    def: 9 },
+  { id: 'stats',   label: 'Tabla de puntos (mantener)',                              def: 14 },
   { id: 'mod',     label: 'Lujo (mantener): mates, bandejas y pases especiales',      def: 6 },
 ];
 export const DEFAULTS = Object.fromEntries(ACTIONS.map(a => [a.id, a.def]));
@@ -43,7 +44,7 @@ if (typeof addEventListener === 'function') {
 }
 export function hint() {
   const b = S.pad, l = id => label(b[id]);
-  return `Joystick: stick izq = moverte · ${l('shoot')} tirar · ${l('pass')} pasar/cambiar · ${l('steal')} robar/cruce · ${l('jump')} saltar · ${l('sprint')} correr (a medias = trote) · stick der = cruce · ${l('menu')} pausa`;
+  return `Joystick: stick izq = moverte · ${l('shoot')} tirar · ${l('pass')} pasar/cambiar · ${l('steal')} robar/cruce · ${l('jump')} saltar · ${l('sprint')} correr (a medias = trote) · stick der = cruce · ${l('stats')} (mantener) tabla de puntos · ${l('menu')} pausa`;
 }
 export function rumble(ms = 150, mag = 0.5, index = active) {
   if (S.rumble === false) return;
@@ -151,7 +152,11 @@ export const resetJoin = () => { for (const p of rawPads()) rdr(p.index).join = 
 
 
 /* ---------- navegación de menús con el joystick (spatial focus sobre botones/tarjetas) ---------- */
-let cur = null;
+let cur = null, curSig = '';
+const sigOf = el => el ? [el.tagName, el.dataset?.a || el.dataset?.act || '', el.dataset?.id || '', el.dataset?.v || '', (el.textContent || '').trim().slice(0, 24)].join('|') : '';
+const isCr = r => r.id === 'cr' || !!r.closest?.('#cr');
+const SEL = r => isCr(r) ? 'button, [data-act], [data-a], input, select, textarea, a[href]' : 'button, [data-act], input, select, textarea, a[href]';   // en carrera también son botones los elementos con data-a (filas, equipos, colores)
+const itemsOf = r => { const l = [...r.querySelectorAll(SEL(r))].filter(vis); return isCr(r) ? l.filter(e => !l.some(o => o !== e && e.contains(o))) : l; };      // en carrera, si uno contiene a otro vale el de adentro
 const $ = id => document.getElementById(id);
 const vis = el => { const r = el.getBoundingClientRect(); if (r.width < 6 || r.height < 6 || el.disabled) return false; const cs = getComputedStyle(el); return cs.visibility !== 'hidden' && cs.display !== 'none'; };
 function activeRoot() {
@@ -160,25 +165,30 @@ function activeRoot() {
   const pz = $('pause'); if (pz && !pz.hidden) return pz;
   const om = $('olModal'); if (om && !om.hidden) return om;
   const pm = $('pm'), m = $('pmModal'); if (pm && !pm.hidden && m && !m.hidden) return m;
+  const ut = $('ut'); if (ut && !ut.hidden) return ut.querySelector('.ut-modal') || ut;
+  const cr = $('cr'); if (cr && !cr.hidden) { const b = cr.querySelector('.busy'); if (b && !b.hidden) return null; return cr.querySelector('.modal') || cr; }       // modo carrera: con una ventana abierta, el joystick se mueve solo dentro de ella
   for (const id of ['auth', 'main', 'ts', 'ol', 'pm']) { const e = $(id); if (e && !e.hidden) return e; }
   return null;
 }
 function setFocus(el) {
-  cur?.classList.remove('pad-focus'); cur = el;
+  cur?.classList.remove('pad-focus'); cur = el; curSig = sigOf(el);
   if (el) { el.classList.add('pad-focus'); el.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); }
 }
 if (typeof document !== 'undefined') document.addEventListener('mousemove', () => { cur?.classList.remove('pad-focus'); }, { passive: true });
 export function menuNav(P) {
   if (!P.connected || isListening()) return;
+  if (cur && !cur.isConnected && curSig && $('cr') && !$('cr').hidden) {                          // la pantalla se redibujó (carrera): el foco vuelve al mismo botón
+    const r = activeRoot(), same = r && itemsOf(r).find(e => sigOf(e) === curSig); if (same) setFocus(same); else cur = null;
+  }
   const n = P.nav, any = n.up || n.down || n.left || n.right || n.ok || n.back;   // (x / y / lb / rb / start los usan pantallas con navegación propia, como el menú previo)
   if (!any) return;
   const root = activeRoot(); if (!root) return;
-  const items = [...root.querySelectorAll('button, [data-act], input, select, textarea, a[href]')].filter(vis);
+  const items = itemsOf(root);
   if (!items.length) return;
   if (!cur || !items.includes(cur)) { setFocus(items.find(e => e.classList.contains('on')) || items[0]); if (n.ok || n.back) { /* sigue: actúa sobre ese elemento */ } else if (!(n.up || n.down || n.left || n.right)) return; }
   cur.classList.add('pad-focus');
   if (n.back) {
-    const back = root.querySelector('#setClose, #pmBack, [data-act="back"], [data-act="close"], [data-act="cancel"]');
+    const back = root.querySelector('#setClose, #pmBack, [data-act="back"], [data-act="close"], [data-act="cancel"], [data-a="back"], [data-a="close"], [data-a="cancel"]');
     if (back && vis(back)) back.click(); else document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape', bubbles: true }));
     return;
   }

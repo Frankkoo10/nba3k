@@ -54,6 +54,10 @@ export function kitsFor(team) {
   const ct = distinct([BLACK, mix(c1, '#000000', 0.5), vivid(c2) ? c2 : null, mix(c1, '#FFFFFF', 0.4)].filter(Boolean), have, 0.22);
   const ctAcc = distinct([c1, c2, WHITE], [ct], 0.3);
   kits.push(make('city', 'City', ct, mix(ct, '#000000', 0.15), ctAcc, lum(ct) < 0.3 ? c2 : '#111111', ctAcc));
+  /* Indiana Pacers (v45): sus 4 uniformes son los de los modelos 3D de Haliburton (assets/jugadores/ind/tyrese_haliburton/, archivos _1 a _4):
+     Icon = azul oscuro · Association = blanca · Statement = amarilla · y el 4.º (id 'city', que es el lugar de la 4.ª camiseta de cada equipo) = Classic, azul claro con línea amarilla.
+     Ninguno de los 4 modelos es negro, así que para IND el 4.º reemplaza a la City negra de siempre. Los otros 29 equipos no cambian. */
+  if (team.ab === 'IND') kits[3] = make('city', 'Classic', '#093785', '#072C6B', '#FDBB30', '#FFFFFF', '#FDBB30');
   return kits;
 }
 
@@ -71,6 +75,12 @@ export function autoKit(team, mine) {
 }
 
 export const nickname = team => String(team.name).split(' ').slice(-1)[0].toUpperCase();
+
+/* ---- Uniformes (v52): se dibujan por código (SVG), sin PNG de conjuntos, así el juego pesa menos ---- */
+/** Dibujo de la camiseta para el menú (SVG generado por código). */
+export function kitArt(team, kit, number = 23, word = '') {
+  return `<span class="kitart">${kitSVG(kit, number, word)}</span>`;
+}
 
 /** Dibujo (SVG) de la camiseta y el short para la vista previa del menú. */
 export function kitSVG(kit, number = 23, word = '') {

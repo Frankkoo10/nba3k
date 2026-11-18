@@ -1,3 +1,4 @@
+import * as Crowd from './crowd.js';
 import * as Auth from './auth.js';
 import * as Pad from './gamepad.js';
 import * as KB from './keyboard.js';
@@ -15,9 +16,10 @@ const ICON = {
 const ITEMS = [
   { id: 'casual', label: 'Partido casual', icon: 'ball' },
   { id: 'online', label: 'Casual online', icon: 'globe' },
+  { id: 'ultimate', label: 'Ultimate Team', icon: 'crown' },
   { id: 'training', label: 'Entrenamiento', icon: 'dumbbell' },
   { id: 'career-player', label: 'Modo carrera — Jugador', icon: 'crown', soon: true },
-  { id: 'career-coach', label: 'Modo carrera — DT', icon: 'clip', soon: true },
+  { id: 'career-coach', label: 'Modo carrera — DT', icon: 'clip' },
   { id: 'settings', label: 'Configuración', icon: 'gear' },
 ];
 
@@ -55,11 +57,24 @@ function choose() {
   if (it.soon) { toast('Este modo todavía no está disponible.'); return; }
   if (it.id === 'settings') { openSettings(); return; }
   hideMain();
-  if (it.id === 'training') H.onTraining?.(); else if (it.id === 'casual') H.onCasual?.(); else if (it.id === 'online') H.onOnline?.();
+  if (it.id === 'training') H.onTraining?.(); else if (it.id === 'casual') H.onCasual?.(); else if (it.id === 'online') H.onOnline?.(); else if (it.id === 'career-coach') H.onCareerCoach?.(); else if (it.id === 'ultimate') H.onUltimate?.();
 }
 
 export function showMain() {
-  hide('auth'); $('settings').hidden = true; $('main').hidden = false; mainOpen = true; renderProfile(Auth.getProfile());
+  hide('auth'); $('settings').hidden = true; $('main').hidden = false; mainOpen = true; renderProfile(Auth.getProfile()); renderMainHints();
+}
+/* Joystick en el menú principal (igual de cómodo que en Ultimate Team): stick o cruceta arriba/abajo = moverse (mantenido repite), ✕/A = elegir.
+   Devuelve true si el menú principal se encarga (si hay Configuración / Controles encima, sigue la navegación general de gamepad.js). */
+export function onPad(P) {
+  if (!mainOpen || !P?.connected || !$('settings').hidden || Controls.isOpen() || Pad.isListening()) return false;
+  const n = P.nav || {};
+  if (n.up) select(sel - 1); else if (n.down) select(sel + 1); else if (n.ok) choose();
+  return true;
+}
+function renderMainHints() {
+  const el = document.querySelector('#main .mm-hints'); if (!el) return;
+  const pad = Pad.state.connected ? `<span><kbd>${Pad.label(0)}</kbd> seleccionar · <kbd>↑</kbd><kbd>↓</kbd> stick o cruceta</span>` : '';
+  el.innerHTML = `<span><kbd>↑</kbd><kbd>↓</kbd> mover</span><span><kbd>Enter</kbd> seleccionar</span>${pad}`;
 }
 function hideMain() { $('main').hidden = true; mainOpen = false; }
 function hide(id) { $(id).hidden = true; }
@@ -84,6 +99,7 @@ function renderPadInfo() {
 export function openSettings() {
   renderPadInfo(); $('setLogout').hidden = !$('pause').hidden;          // en plena pausa no tiene sentido cerrar sesión
   $('setSens').value = settings.sens; $('setSensV').textContent = `${settings.sens.toFixed(1)}×`;
+  const cv = settings.crowd ?? 0.8; $('setCrowd').value = cv; $('setCrowdV').textContent = `${Math.round(cv * 100)}%`;
   $('settings').hidden = false;
 }
 function closeSettings() { $('settings').hidden = true; }
@@ -131,7 +147,8 @@ export async function boot(handlers) {
   $('setHints').onchange = e => { settings.padHints = e.target.checked; saveSettings(); };
   $('setRumble').onchange = e => { settings.rumble = e.target.checked; saveSettings(); };
   $('setDead').oninput = e => { settings.dead = +e.target.value; $('setDeadV').textContent = settings.dead.toFixed(2); saveSettings(); };
-  Pad.onConnect(() => { if (!$('settings').hidden) setTimeout(renderPadInfo, 50); });
+  Pad.onConnect(() => { if (!$('settings').hidden) setTimeout(renderPadInfo, 50); if (mainOpen) setTimeout(renderMainHints, 50); });
+  $('setCrowd').oninput = e => { settings.crowd = +e.target.value; $('setCrowdV').textContent = `${Math.round(settings.crowd * 100)}%`; Crowd.setVolume(settings.crowd); saveSettings(); };
   $('setSens').oninput = e => { settings.sens = +e.target.value; $('setSensV').textContent = `${settings.sens.toFixed(1)}×`; saveSettings(); };
   $('setLogout').onclick = async () => { closeSettings(); await Auth.signOut(); showAuth(); };
   $('setFull').onclick = async () => { try { await document.documentElement.requestFullscreen(); await navigator.keyboard?.lock?.(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ControlLeft', 'KeyQ', 'KeyE']); } catch (e) { console.warn(e); } };

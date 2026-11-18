@@ -3,7 +3,7 @@ import * as Pad from './gamepad.js';
 import { TEAMS } from './teams.js';
 import { courtFor } from './courts.js';
 import { loadRoster, fallbackRoster, POS, ATTRS, inchesToFtIn } from './roster.js';
-import { kitsFor, kitById, kitsClash, autoKit, kitSVG, nickname, lum } from './kits.js';
+import { kitsFor, kitById, kitsClash, autoKit, kitSVG, kitArt, nickname, lum } from './kits.js';
 import { STYLE_DEFAULT } from './ai.js';
 import { fitCfg, project } from './stagecam.js';
 
@@ -757,7 +757,7 @@ function renderKitCols() {
     const el = $('pmKits' + side); if (!el) continue;
     const lockK = !!S.online && side === 'B';
     el.innerHTML = `<span class="fc-pill ${side === 'A' ? 'loc' : 'vis'}">${S.online ? (side === 'A' ? 'VOS' : 'RIVAL') : (side === 'A' ? 'LOCAL' : 'VISITANTE')} · ${esc(nickname(team))}</span>
-      ${kitsFor(team).map(k => `<button type="button" class="fc-kit${k.id === cur ? ' on' : ''}${lockK ? ' lock' : ''}" ${lockK ? 'tabindex="-1"' : ''} data-act="kit" data-side="${side}" data-id="${k.id}"><span class="svg">${kitSVG(k, num, nickname(team))}</span><b>${k.name}</b><em>${CHECK}</em></button>`).join('')}`;
+      ${kitsFor(team).map(k => `<button type="button" class="fc-kit${k.id === cur ? ' on' : ''}${lockK ? ' lock' : ''}" ${lockK ? 'tabindex="-1"' : ''} data-act="kit" data-side="${side}" data-id="${k.id}"><span class="svg">${kitArt(team, k, num, nickname(team))}</span><b>${k.name}</b><em>${CHECK}</em></button>`).join('')}`;
   }
   const clash = kitsClash(kitObj('A'), kitObj('B')), c = $('pmClash');
   c.hidden = !clash;
@@ -826,7 +826,7 @@ function renderSummary() {
   const el = $('pmSum'); if (!el) return;
   const side = s => {
     const t = s === 'A' ? S.teamA : S.teamB, r = s === 'A' ? S.rosA : S.rosB, k = kitObj(s);
-    return `<div class="fc-sumt" style="--tc:${tint(t)}"><img src="${t.logo}" alt=""><b>${esc(nickname(t))}</b><small>${esc(t.name)}</small><em>OVR ${r ? tovr(r) : '…'}</em><div class="k">${kitSVG(k, r ? r.starters[s === 'A' ? S.ctrlSlot : 0]?.number ?? 23 : 23, nickname(t))}</div><small>${k.name}</small></div>`;
+    return `<div class="fc-sumt" style="--tc:${tint(t)}"><img src="${t.logo}" alt=""><b>${esc(nickname(t))}</b><small>${esc(t.name)}</small><em>OVR ${r ? tovr(r) : '…'}</em><div class="k">${kitArt(t, k, r ? r.starters[s === 'A' ? S.ctrlSlot : 0]?.number ?? 23 : 23, nickname(t))}</div><small>${k.name}</small></div>`;
   };
   const style = STYLE_ROWS.map(([k]) => labelOf('style.' + k)).join(' · ');
   el.innerHTML = `<div class="fc-sumvs">${side('A')}<strong>VS</strong>${side('B')}</div>

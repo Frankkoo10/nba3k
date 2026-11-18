@@ -14,6 +14,7 @@ export const ACTIONS = [
   { id: 'switch',  label: 'Cambiar de jugador',                        def: ['KeyQ', null] },
   { id: 'camera',  label: 'Cambiar cámara',                            def: ['KeyC', null] },
   { id: 'mod',     label: 'Lujo (mantener): mates, bandejas y pases especiales', def: ['KeyZ', null] },
+  { id: 'stats',   label: 'Tabla de puntos (mantener)',                def: ['Tab', null] },
   { id: 'reset',   label: 'Reiniciar jugada (solo entrenamiento)',     def: ['KeyR', null] },
 ];
 export const PAUSE_KEYS = ['Escape', 'KeyP'];                          // fijas: no se pueden reasignar
@@ -69,7 +70,7 @@ export function hasNoPrimary(action) { return !S.keys[action][0]; }
 export const isListening = () => !!listenCb;
 export function listen(cb) { listenCb = cb; return () => { listenCb = null; }; }
 export function stopListening() { listenCb = null; }
-export const reserved = code => PAUSE_KEYS.includes(code) || /^F\d+$/.test(code) || code === 'Tab' || code === 'MetaLeft' || code === 'MetaRight' || code === 'ContextMenu';
+export const reserved = code => PAUSE_KEYS.includes(code) || /^F\d+$/.test(code) || code === 'MetaLeft' || code === 'MetaRight' || code === 'ContextMenu';
 /* devuelve true si se "comió" el evento (el juego no debe reaccionar). cb recibe (code) o (null) si cancelaste o (false, motivo) si no se puede */
 export function captureKey(e) {
   if (!listenCb) return false;
@@ -89,5 +90,5 @@ export function captureMouse(e, onSlot) {                               // clic 
 }
 
 const prim = id => label(S.keys[id][0]);
-export const hint = () => `Movete con ${prim('up')} ${prim('left')} ${prim('down')} ${prim('right')} · ${prim('shoot')} = tirar · ${prim('pass')} = pasar · ${prim('dribble')} = driblear · ${prim('steal')} = robar · ${prim('jump')} = saltar/taponar · ${prim('switch')} = cambiar jugador · ${prim('camera')} = cámara · Esc = pausa`;
+export const hint = () => `Movete con ${prim('up')} ${prim('left')} ${prim('down')} ${prim('right')} · ${prim('shoot')} = tirar · ${prim('pass')} = pasar · ${prim('dribble')} = driblear · ${prim('steal')} = robar · ${prim('jump')} = saltar/taponar · ${prim('switch')} = cambiar jugador · ${prim('camera')} = cámara · ${prim('stats')} (mantener) = tabla de puntos · Esc = pausa`;
 export const trainHint = () => `Entrenamiento libre: mantené ${prim('shoot')} para tirar y soltá en la línea blanca. Cerca del aro, ${prim('jump')} = mate o bandeja. Esc = pausa.`;

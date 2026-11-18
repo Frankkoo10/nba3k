@@ -278,18 +278,19 @@ export function buildArena(scene, court) {
   const LS = court.logo.size;
   const fl = add(new THREE.PlaneGeometry(LS, LS), new THREE.MeshBasicMaterial({ map: logoTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), 0, 0.008, 0);
   fl.rotation.set(-H, 0, -H);
+  const floorGfx = [fl];                                              // todo lo pintado sobre el parquet: con una cancha 3D (court.model) main.js lo oculta
   for (const ft of court.floorTexts || []) {
     const [c, g] = mk(1600, 120);
     g.font = '800 96px "Barlow Condensed", Arial'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = ft.color;
     g.fillText(ft.text.split('').join(String.fromCharCode(8202)), 800, 62);
     const w = ft.size * 1600 / 120, m = new THREE.Mesh(new THREE.PlaneGeometry(w, ft.size), new THREE.MeshBasicMaterial({ map: toTex(c), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
-    m.position.set(ft.x, 0.008, ft.z); m.rotation.set(-H, 0, ft.x > 0 ? -H : H); root.add(m);
+    m.position.set(ft.x, 0.008, ft.z); m.rotation.set(-H, 0, ft.x > 0 ? -H : H); root.add(m); floorGfx.push(m);
   }
   let drawSurface = null;
   if (court.surface) {                                                // contorno de color, panal, rombos, textos y avispones chicos
     const [sc, sg] = mk(Math.ceil(FW * PPM), Math.ceil(FL * PPM)), sTex = toTex(sc); sTex.anisotropy = 8;
     const sm = new THREE.Mesh(new THREE.PlaneGeometry(FW, FL), new THREE.MeshStandardMaterial({ map: sTex, transparent: true, roughness: 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }));
-    sm.rotation.x = -H; sm.position.y = 0.006; sm.receiveShadow = true; root.add(sm);
+    sm.rotation.x = -H; sm.position.y = 0.006; sm.receiveShadow = true; root.add(sm); floorGfx.push(sm);
     drawSurface = () => { paintSurface(sg, court); sTex.needsUpdate = true; };
     drawSurface();
   }
@@ -300,7 +301,7 @@ export function buildArena(scene, court) {
   /* ---- animación: cintas LED y público que salta cuando hay festejo ---- */
   let cheerT = 0, time = 0, lastKey = '', dead = false;
   return {
-    court,
+    court, floorLogo: fl, floorGfx,
     cheer(sec) { cheerT = Math.max(cheerT, sec); },
     drawBoard(info) {
       const key = JSON.stringify(info);
