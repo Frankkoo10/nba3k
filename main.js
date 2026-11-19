@@ -192,7 +192,7 @@ function setCourt(def) {
   if (def.model && !courtObj) loadCourtModel(def);
 }
 setCourt(courtFor('GSW'));                              // arranca en el Chase Center; cada partido / entrenamiento pone la que corresponde
-/* Canchas 3D (assets/gsw_court.glb, sas_court.glb, hou_court.glb, cha_court.glb, lal_court.glb): piso con líneas, logos y publicidad + soportes y tableros de los aros.
+/* Canchas 3D (assets/<ab>_court.glb: las 30 canchas de equipo + asg_court.glb del All-Star): piso con líneas, logos y publicidad + soportes y tableros de los aros.
    Están calibradas al juego: las líneas de fondo y banda caen en ±14,325 y ±7,62, y los aros en ±12,75 (la física no cambia).
    El aro y la red con física siguen siendo los del juego. Se baja solo la del equipo que se usa (y se libera la anterior: cada una pesa ~20 MB en la GPU).
    Si el archivo no carga, queda la cancha de siempre. */
@@ -551,6 +551,7 @@ function pauseInfo() {
 Pause.init({
   canOpen: () => !paused && !PM.isOpen() && !UI.isMainOpen() && !Online.isOpen() && Career.isHidden() && UT.isHidden(),
   isTraining: () => mode === 'training', info: pauseInfo,
+  canSubs: () => mode === 'match' && !netRole && humans.some(h => h.agent), subsData, subSwap,
   onOpen: () => {
     if (!netRole) paused = true;                                      // online el partido NO se frena: el rival sigue jugando
     KB.releaseAll(); net.lc = null;
@@ -906,16 +907,16 @@ function contestOf(a) {                                // 0..1 qué tan marcado 
    · Tiros libres: base ×1.10 y depende del rating de tiro libre (90 → ×0.99 · 50 → ×1.22). */
 function chargeTarget(a) {
   const info = a.info || {}, H = a.aimHoop || attackHoop(a.team);
-  if (a.ftShot) return clamp(1.1 + (70 - (info.ft ?? 70)) * 0.006, 0.95, 1.4) * (a.tired ? 1.1 : 1);
+  if (a.ftShot) return clamp(1.1 + (70 - (info.ft ?? 70)) * 0.006, 0.95, 1.4) * (a.tired ? 1.1 : 1) * (1 + 0.12 * tirePen(a));
   const d = Math.hypot(a.pos.x, H.hz - a.pos.z), three = d > 7.24 || Math.abs(a.pos.x) >= 6.7;
   const rating = clamp(1 - (zoneRating(info, three, d) - 70) * 0.008, 0.7, 1.35);
   const open = 1 + (a.aimHoop ? contestOf(a) : 0) * 0.45;
-  return clamp((three ? 1.28 : 1) * rating * open * (a.tired ? 1.1 : 1), 0.6, 2.1);
+  return clamp((three ? 1.28 : 1) * rating * open * (a.tired ? 1.1 : 1) * (1 + 0.18 * tirePen(a)), 0.6, 2.1);
 }
 function aiShoot(a) {                                  // el bot decide tirar: la calidad del tiro define si el "disparo" sale perfecto o errado
   if (!startCharge(a)) return false;
   const q = shotQuality(G, a, a.pos.x, a.pos.z), pr = prof(a), cst = contestOf(a);
-  const p = clamp(q * pr.acc * (1 - cst * 0.3) * (a.tired ? 0.85 : 1), 0.03, 0.9);
+  const p = clamp(q * pr.acc * (1 - cst * 0.3) * (a.tired ? 0.85 : 1) * (1 - 0.18 * tirePen(a)), 0.03, 0.9);
   a.charge = Math.random() < p ? PERFECT + (Math.random() - 0.5) * 0.05 : PERFECT + (Math.random() < 0.5 ? -1 : 1) * (0.06 + Math.random() * 0.14);
   releaseCharge(a); return true;
 }
@@ -1058,7 +1059,7 @@ function launchPass(a, t, style) {
   const tf2 = Math.max(0.12, Math.hypot(aim.x - from.x, aim.z - from.z) / spd);
   const v = V3((aim.x - from.x) / tf2, (aim.y - from.y) / tf2 + 0.5 * G9 * tf2, (aim.z - from.z) / tf2).multiplyScalar(1);
   v.x *= 1.1; v.z *= 1.1;                                              // compensa el arrastre del aire en pases largos
-  const err = (0.012 + (100 - a.info.passAcc) * 0.0006) * prof(a).passErr * (1 + (a.tired ? 0.8 : 0)) * (isHum(a) ? 0.7 : 1) * (style ? PASS_STYLES[style].err : 1);
+  const err = (0.012 + (100 - a.info.passAcc) * 0.0006) * prof(a).passErr * (1 + (a.tired ? 0.8 : 0) + 0.5 * tirePen(a)) * (isHum(a) ? 0.7 : 1) * (style ? PASS_STYLES[style].err : 1);
   v.applyAxisAngle(UP, gauss() * err); v.multiplyScalar(1 + gauss() * err * 0.5);
   let bw = null, bn = 0;
   if (style === 'bounce') {                                            // pase de pique: se busca dónde pegar en el piso para que llegue a la cintura del compañero
@@ -1156,7 +1157,10 @@ function startBlock(a, kind) {
 }
 
 /* ============ Física del jugador (la misma para vos y para los bots) ============ */
-function fatigue(a) { return a.stam >= 0.45 ? 1 : 0.8 + 0.2 * smooth(a.stam / 0.45); }
+/* v65 · cansancio que se NOTA: por debajo del 60 % de energía el jugador va perdiendo velocidad, puntería y precisión de pase de a poco (hasta ~28 % menos de velocidad y ~18 % de tiro).
+   Por eso hay que hacer cambios: el que sale descansa en el banco (ver "los suplentes descansan") y vuelve fresco. */
+function fatigue(a) { return a.stam >= 0.6 ? 1 : 0.72 + 0.28 * smooth(a.stam / 0.6); }
+const tirePen = a => (opts.fatigue ? clamp(1 - a.stam / 0.6, 0, 1) : 0);      // 0 = fresco · 1 = sin energía
 function updateAgent(a, dt, I) {
   a.blkHit = Math.max(0, (a.blkHit || 0) - dt); a.sbT = Math.max(0, (a.sbT || 0) - dt); a.moveT = Math.max(0, (a.moveT || 0) - dt);
   a.actT = Math.max(0, a.actT - dt); a.stunT = Math.max(0, a.stunT - dt); a.moveCd -= dt; a.crossT = Math.max(0, a.crossT - dt);
@@ -1196,7 +1200,7 @@ function updateAgent(a, dt, I) {
   // cansancio
   const sp = Math.hypot(a.vel.x, a.vel.z), sm = prof(a).stamina * (a.drainM ?? 1), rm = a.recM ?? 1;   // resistencia: el que tiene más se cansa más lento y recupera más rápido
   if (!dead) {
-    if (sp > 5.2 && I.sprint) a.stam -= 0.075 * dt * sm; else if (sp > 2.0) a.stam -= 0.014 * dt * sm; else if (sp < 1) a.stam += 0.04 * dt * rm;
+    if (sp > 5.2 && I.sprint) a.stam -= 0.09 * dt * sm; else if (sp > 2.0) a.stam -= 0.02 * dt * sm; else if (sp < 1) a.stam += 0.04 * dt * rm;
   } else a.stam += 0.10 * dt * rm;
   a.stam = clamp(a.stam, 0, 1);
   if (!opts.fatigue) { a.stam = 1; a.tired = false; }                // cansancio apagado
@@ -1747,6 +1751,19 @@ function checkPlayerOut() {
 function handTarget(a, out) {
   const p = _hp0.setFromMatrixPosition(a.R.hR.matrixWorld), e = _hp1.setFromMatrixPosition(a.R.elR.matrixWorld);
   return out.copy(p).addScaledVector(e.sub(p).normalize(), -0.175);
+}
+/* ---- v65 · Cambios manuales desde la pausa (infinitos, como en el básquet): sale uno de la cancha, entra uno del banco; el que sale se recupera en el banco ---- */
+const subTeam = () => humans.find(h => h.agent)?.agent.team ?? 0;
+function subsData() {
+  const t = subTeam(), mk = (i, x, rest) => ({ i, name: x.name, num: x.number, pos: x.pos, ovr: x.ovr, e: Math.round(Math.max(0, Math.min(1, rest)) * 100) });
+  return { team: (t === 0 ? teamA : teamB).name, court: T[t].court.map((a, i) => ({ ...mk(i, a.info, a.stam), ctl: !!a.hum })), bench: T[t].bench.map((b, i) => mk(i, b, b.rest ?? 1)) };
+}
+function subSwap(ci, bi) {
+  const t = subTeam(), a = T[t].court[ci], cand = T[t].bench[bi]; if (!a || !cand) return false;
+  const out = a.info; out.rest = a.stam; T[t].bench.splice(bi, 1, out);
+  setInfo(a, cand); a.stam = cand.rest ?? 1; a.tired = false;
+  say(`Cambio en ${T[t].ab}: entra ${cand.name} por ${out.name}`);
+  return true;
 }
 function doSubstitutions(force) {                       // en las pausas entran los suplentes por los jugadores cansados
   if (mode !== 'match') return;
@@ -2406,7 +2423,7 @@ function stepGame(dt) {
   if (mode === 'match') { checkDunkBlocks(); separate(); }
   for (const a of act) pose(a, dt);
   ballLogic(dt);
-  for (const t of [0, 1]) for (const b of T[t].bench) b.rest = Math.min(1, (b.rest ?? 1) + dt * 0.03 * recoverMul(b));       // los suplentes descansan
+  for (const t of [0, 1]) for (const b of T[t].bench) b.rest = Math.min(1, (b.rest ?? 1) + dt * 0.055 * recoverMul(b));       // los suplentes descansan
   if (dead) updateDead(dt); else if (mode === 'match') { tickGame(dt); checkPlayerOut(); }
 }
 function frame() {
@@ -2418,7 +2435,7 @@ function frame() {
   const sep = mode === 'match' && (humans.length > 1 || own);        // varios jugadores: cada joystick lee solo a su dueño
   if (sep) for (const h of humans) if (h.dev === 'pad') { h.P = Pad.readPad(h.pad); h.connected = h.P.connected; }
   if (PM.isOpen()) for (const j of Pad.joinPollAll()) PM.onJoin?.(j);
-  if (paused || Pause.isOpen()) { if (!PM.onPad(PS) && !UI.onPad(PS)) Pad.menuNav(PS); Pause.onPad(PS); UT.onPad(PS); Career.onPad(PS); }
+  if (paused || Pause.isOpen()) { if (Pause.ownsPad()) Pause.onPad(PS); else { if (!PM.onPad(PS) && !UI.onPad(PS)) Pad.menuNav(PS); Pause.onPad(PS); } UT.onPad(PS); Career.onPad(PS); }
   else if (!sep) padGame(PS, dt);
   else for (const h of humans) if (h.dev === 'pad' && h.P?.connected && !paused) padGame(h.P, dt, h);
   if (!paused) { if (netRole === 'guest') viewerStep(dt); else stepGame(dt); }

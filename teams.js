@@ -17,3 +17,13 @@ const RAW = [
   ['UTA','Utah Jazz','#002B5C','#F9A01B'], ['WAS','Washington Wizards','#002B5C','#E31837'],
 ];
 export const TEAMS = RAW.map(([ab, name, c1, c2]) => ({ ab, name, c1, c2, logo: `logos/${ab}.png` }));
+
+/* v65 · Equipos especiales del Partido casual (no están en Carrera, Entrenamiento ni Ultimate Team):
+   All-Star Rojo y All-Star Azul, con los 30 íconos de las cartas repartidos 15 y 15 (ultimate/data/icons.js, supabase/009_all_star_iconos.sql).
+   `nick` es lo que se escribe en el frente de la camiseta y en los menús. */
+export const ALLSTAR_TEAMS = [
+  { ab: 'ASR', name: 'All-Star Rojo', nick: 'ALL-STAR ROJO', c1: '#D71D3A', c2: '#0B1B3F', logo: 'logos/ASR.png', allstar: true },
+  { ab: 'ASB', name: 'All-Star Azul', nick: 'ALL-STAR AZUL', c1: '#1E5BD8', c2: '#FFC72C', logo: 'logos/ASB.png', allstar: true },
+];
+/** Los 30 equipos de la NBA + los dos All-Star: lo que se puede elegir en Partido casual (y en las salas online). */
+export const CASUAL_TEAMS = [...TEAMS, ...ALLSTAR_TEAMS];

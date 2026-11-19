@@ -1,5 +1,6 @@
 import * as Auth from './auth.js';
 import { knownLook, lookOf } from './looks.js';
+import { iconRows } from './ultimate/data/icons.js';
 
 /* ============================================================================
    Planteles. Si Supabase está configurado se leen de las tablas `teams` y `players`
@@ -129,7 +130,8 @@ export function buildRoster(team, list) {
   POS.forEach((pos, k) => { if (bench.length < 5 && !bench.some(b => b.pos === pos)) bench.push(generic(team, pos, 10 + k, false)); });
   return { starters, bench };
 }
-export const fallbackRoster = team => buildRoster(team, []);
+/** Plantel de respaldo. Los All-Star (v65) traen a sus 15 íconos aunque no haya Supabase; el resto, jugadores genéricos. */
+export const fallbackRoster = team => buildRoster(team, team?.allstar ? iconRows(team.ab) : []);
 
 const cache = new Map();
 /** Devuelve { starters:[5], bench:[...] } para un equipo. Nunca falla: si no hay base, usa jugadores genéricos. */
@@ -144,6 +146,7 @@ export async function loadRoster(team) {
       list = data || [];
     } catch (e) { console.warn('No se pudo leer el plantel de', team.ab, '(se usan jugadores genéricos):', e?.message || e); }
   }
+  if (!list.length && team.allstar) list = iconRows(team.ab);       // All-Star Rojo / Azul: si todavía no corriste supabase/009, salen de ultimate/data/icons.js
   const r = buildRoster(team, list);
   cache.set(team.ab, r);
   return r;

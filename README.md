@@ -1,4 +1,4 @@
-# Basket 3D — v61
+# Basket 3D — v68
 
 Basket en tercera persona con Three.js: cancha NBA a escala real, física realista, menú con los 30 equipos (con escudos), marcador estilo NBA TV, tribuna estilo Chase Center (Warriors), árbitro y un rival (bot) quieto.
 
@@ -65,6 +65,12 @@ Para agregar más banners de campeonato, editá el arreglo de años en `arena.js
 - Las medidas de los huesos y de las manos no cambiaron, así que la pelota, los mates, los pases y la IA se comportan igual.
 - Uniforme de los Lakers: los decals (número y nombre) ahora se curvan sobre la camiseta, y las franjas laterales y el dobladillo del short siguen la forma del cuerpo.
 
+
+## Novedades v65 — All-Star Rojo / Azul + 30 ÍCONOS
+- **Partido casual**: dos equipos nuevos, *All-Star Rojo* (ASR) y *All-Star Azul* (ASB), con los 30 íconos repartidos 15 y 15 (5 titulares por equipo, mismo promedio: 96,5). Juegan en la cancha del All-Star. Salen de `ultimate/data/icons.js` o, si corriste `supabase/009_all_star_iconos.sql`, de la tabla `players`.
+- **Ultimate Team**: las 30 cartas ICON_* están en `ultimate/cards.zip` y en `players.js` (554 cartas), con su equipo de la carta, rareza propia *Ícono*, precios altos y jugador enlazado por id. Sus atributos salen de las 6 estadísticas impresas en cada carta.
+- **Sobres**: íconos solo en Oro (~0,04%), Élite (~0,25%) y Especial (~0,9%), nunca en Rookie, como en FC 27 ("menos del 1%"). Cuanto mayor la media, más raro. Al salir uno: el sobre se pone dorado y la sala a oscuras, walkout con foco cenital, haces y polvo de oro y brillo que recorre la carta.
+- Corré `supabase/009_all_star_iconos.sql` (después del 002, 003, 005, 006 y 007).
 
 ## Novedades v9 — dribleo pegado al cuerpo + atributos estilo NBA 2K26
 - **La pelota ya no se despega al correr** (`main.js`, `dribbleControl` y `pose`):
@@ -569,3 +575,28 @@ Menú principal → **Ultimate Team**. Todo el código está en la carpeta `ulti
 - **Todo partido de Ultimate Team paga monedas**: 500 por terminarlo y 700 si lo ganás (`MATCH_PAY` en `ultimate/ut-state.js`). Abandonar no paga. Los premios de cada modo se suman encima (ascensos, etapas Rookie por primera vez, premio de nivel de Squad Battles, premios del All-Star). Se sacaron las monedas chicas que pagaban antes Dream Live, Rookie repetido y Squad al perder, porque ahora las cubre este pago.
 - **All-Star Live**: pantalla nueva con las dos etapas lado a lado (círculos ✓/✕ por partido), la regla de cada una, qué pasa si clasificás o no, y la escalera de premios de las 10 victorias. Premios mejorados (suman ~58.000 monedas más sobres) y nuevo **premio por clasificar** (2.000) y **consuelo** (2.500). En `ALLSTAR`.
 - **Dream Live**: pantalla nueva con la barra de puntos (zona de descenso / ascenso), la escalera de divisiones 10→1, "si ganás / si perdés" con el resultado exacto, la racha actual y un panel "Cómo funciona".
+
+## Cartas de Ultimate Team en un zip
+Las 524 cartas viajan en **`ultimate/cards.zip`** (un solo archivo, sin comprimir). El juego lo baja al abrir Ultimate Team y arma las imágenes en memoria (`ultimate/cardzip.js`). Si el zip no está, usa las sueltas en `ultimate/cards/<id>.webp`. Si lo regenerás, que sea **Store / sin compresión** (los webp ya vienen comprimidos).
+
+
+## v64 — fondo de la apertura de sobres: cancha del All-Star
+- **Mientras se abre el sobre y se muestran las cartas comunes (menos de 86), el fondo es la cancha del All-Star 2026** (`assets/asg_court.glb`) con la tribuna genérica en los colores del All-Star, en vez del círculo de parquet liso.
+- **Walkouts (86+): sin cambios**, aparece la cancha del equipo del jugador. Al terminar el walkout, si quedan cartas, vuelve el fondo del All-Star.
+- El GLB se calibró con `python3 tools/calibrar_cancha.py allstar_2026_court.glb asg` (mismas medidas que las demás canchas) y se baja en segundo plano al ver los sobres en la tienda. Si no carga, el fondo usa la misma cancha armada por código (con los colores del All-Star), así que nunca queda vacío.
+- Código: la cancha es `ALLSTAR` en `courts.js` (colores de tribuna, público y pantallas LED); el fondo se arma en `ultimate/packs3d.js` (`bgOn` / `bgOff`, y `BG_DIM` para cuánto se apaga el estadio); `ultimate/court3d.js` ahora puede usar un GLB con `createCourtWorld(def, { model: true })`.
+- `ALLSTAR` no está en la lista de canchas de Entrenamiento (no es de ningún equipo).
+
+## Novedades v65 (parte 2)
+- **All-Star Live**: máximo 2 entradas por día y por usuario (se reinicia a las 00:00). El panel muestra "Entradas de hoy: X de 2". Rival al azar en cada partido de la fase final (si abandonás, el próximo se sortea de nuevo) y premios más grandes desde la 5.ª victoria (20.000 + sobre) hasta 100.000 en la 10.ª.
+- **Pausa con joystick**: cruceta / stick para moverse, ✕/A elegir, ○/B volver, Start reanuda.
+- **Cambios desde la pausa** (Partido casual sin online): pantalla "Cambios" con la energía de los 5 de la cancha y del banco. Elegís uno de cada lado y se cambian, todas las veces que quieras. Los del banco se recuperan.
+- **Cansancio que se nota**: bajo el 60 % de energía el jugador pierde velocidad, puntería y precisión de pase de a poco (hasta ~28 % de velocidad y ~18 % de tiro). Se cansan algo más rápido y el banco se recupera más rápido.
+
+
+## Novedades v68 — las 30 canchas 3D y el ícono con mate
+- **30 canchas 3D**: ahora los 30 equipos tienen su `assets/<ab>_court.glb` (más `asg_court.glb` del All-Star), calibradas con `tools/calibrar_cancha.py` (las líneas caen en ±14,325 / ±7,62 y los aros en ±12,75, así que la física no cambia). Cada una está conectada en `courts.js` con `model` + `apron` (color del contorno). Las que ya estaban (GSW, CHA, SAS, LAL, HOU) quedaron igual.
+- **Carga**: la pantalla de carga solo baja la cancha de arranque (GSW), la del fondo de los sobres (All-Star), la pelota y los escudos; las demás canchas se bajan al usarlas (`python3 tools/crear_manifiesto.py --todo` las baja todas al arrancar).
+- **Ultimate Team · walkouts**: cuando sale un caminante (media 86+) el fondo es la **cancha 3D real del equipo del jugador** (antes era la armada por código). Las canchas de los walkouts se empiezan a bajar mientras se abre el sobre y se liberan al terminar cada uno.
+- **Pelota 3D** (`assets/ball.glb`, la misma `nba_basketball.glb` de canchas_3d.zip ya calibrada) en los walkouts, en lugar de la esfera dibujada.
+- **Ícono (nueva secuencia)**: si sale un ícono va **primero** en el sobre y las demás cartas siguen de menor a mayor. Se abre el sobre → la pelota aparece en grande, se achica y pica 5 veces en el piso mientras salen las estadísticas (TIR · PAS · REG · DEF · REB · VEL) con luces blancas y de colores → entra el jugador (con su aspecto y la camiseta de su equipo) y clava un mate de dos manos en cámara lenta → ahí sale la carta del ícono. Está en `ultimate/packs3d.js` (`iconWalkout`, `dunkSeq`).

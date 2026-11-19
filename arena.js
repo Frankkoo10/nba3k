@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
-import { TEAMS } from './teams.js';
+import { CASUAL_TEAMS as TEAMS } from './teams.js';
 
 /* Estadio. Se arma a partir de una cancha de courts.js (colores, logo, banners, pantallas LED, público…):
    bowl cerrado y empinado en tres niveles (bowl inferior, suites, bowl superior), pantallas LED en la banda y alrededor

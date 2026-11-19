@@ -74,7 +74,7 @@ export function autoKit(team, mine) {
   return best;
 }
 
-export const nickname = team => String(team.name).split(' ').slice(-1)[0].toUpperCase();
+export const nickname = team => team.nick || String(team.name).split(' ').slice(-1)[0].toUpperCase();
 
 /* ---- Uniformes (v52): se dibujan por código (SVG), sin PNG de conjuntos, así el juego pesa menos ---- */
 /** Dibujo de la camiseta para el menú (SVG generado por código). */

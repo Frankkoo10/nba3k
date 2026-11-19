@@ -1,4 +1,4 @@
-import { TEAMS } from './teams.js';
+import { TEAMS, ALLSTAR_TEAMS } from './teams.js';
 
 /* ============================================================================
    Canchas. Cada equipo va a tener la suya (se agregan de a poco). Una cancha es solo datos:
@@ -8,7 +8,7 @@ import { TEAMS } from './teams.js';
    Para agregar una cancha nueva:
      1) copiá el bloque de IND (o GSW) y cambiá los datos;
      2) agregalo al arreglo REAL de abajo.
-   Con `model` (GSW, SAS, HOU, CHA, LAL) la cancha usa un GLB calibrado en assets/: el piso 3D reemplaza al parquet, las líneas, la pintura y el logo del centro que dibuja el juego
+   Con `model` (los 30 equipos) la cancha usa un GLB calibrado en assets/: el piso 3D reemplaza al parquet, las líneas, la pintura y el logo del centro que dibuja el juego
    (los datos de `surface`, `logo` y `floorTexts` de esos equipos quedan como respaldo por si el GLB no carga). Para sumar otra: python3 tools/calibrar_cancha.py <archivo>.glb <ab> (ver README).
    Los equipos que todavía no tienen cancha propia usan una cancha genérica con sus colores y su escudo.
    ========================================================================== */
@@ -38,6 +38,7 @@ const GSW = {
    Parquet gris claro, pintura negra, el logo "P" amarillo gigante con la pelota negra en el centro,
    tribuna llena de camisetas amarillas, butacas azul oscuro y pantallas LED azules. */
 const IND = {
+  model: 'assets/ind_court.glb', apron: '#002e62',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'IND', team: 'IND', arena: 'Gainbridge Fieldhouse', city: 'Indianápolis', real: true,
   floor: { h: 34, s: 9, l: 64, jitter: 5 },
   paint: '#15161a', paintRough: 0.55,
@@ -92,6 +93,7 @@ const CHA = {
    Parquet claro, líneas negras (el borde en blanco), zonas azul oscuro con arcos amarillos, contorno negro con \"UTAH JAZZ\" amarillo
    inclinado en las líneas de fondo, la nota del Jazz con la pelota en negro en el centro y \"Delta Center\" sobre el parquet. */
 const UTA = {
+  model: 'assets/uta_court.glb', apron: '#0b233f',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'UTA', team: 'UTA', arena: 'Delta Center', city: 'Salt Lake City', real: true,
   floor: { h: 35, s: 48, l: 69, jitter: 5 },
   paint: '#101e2b', paintRough: 0.5, lineColor: '#0b0d10', edgeColor: '#e9e9e9',
@@ -180,6 +182,7 @@ const LAL = {
    Contorno y zonas vino, parquet crema, la \"C\" vino con borde dorado en el centro, \"CLEVELAND\" y \"CAVALIERS\" dorados en el
    fondo, butacas grises y público vino y dorado. */
 const CLE = {
+  model: 'assets/cle_court.glb', apron: '#0e0e10',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'CLE', team: 'CLE', arena: 'Rocket Mortgage FieldHouse', city: 'Cleveland', real: true,
   floor: { h: 38, s: 50, l: 76, jitter: 4 },
   paint: '#7d1d3b', paintRough: 0.5, lineColor: '#f4ead6', edgeColor: '#f4ead6',
@@ -240,6 +243,7 @@ const HOU = {
    Parquet crema, contorno y zonas verde bosque, el ciervo de los Bucks en el centro, "BUCKS" crema en las líneas de fondo y
    "FISERV FORUM" en la banda. Tribuna oscura con público verde y crema. */
 const MIL = {
+  model: 'assets/mil_court.glb', apron: '#00471b',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'MIL', team: 'MIL', arena: 'Fiserv Forum', city: 'Milwaukee', real: true,
   floor: { h: 38, s: 52, l: 79, jitter: 4 },
   paint: '#0b5a2c', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -267,6 +271,7 @@ const MIL = {
    Parquet clásico claro, contorno y zonas verde Celtics, el trébol con el duende en el centro, "CELTICS" blanco en el fondo y
    "TD GARDEN" en la banda. Los 18 banners de campeonato. Tribuna oscura llena de público verde y blanco. */
 const BOS = {
+  model: 'assets/bos_court.glb', apron: '#007932',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'BOS', team: 'BOS', arena: 'TD Garden', city: 'Boston', real: true,
   floor: { h: 36, s: 46, l: 72, jitter: 7 },
   paint: '#007A33', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -294,6 +299,7 @@ const BOS = {
    Parquet claro, contorno y zonas azul Mavs, el caballo en el centro, "MAVERICKS" azul y blanco en el fondo y
    "AMERICAN AIRLINES CENTER" en la banda. Tribuna llena de público azul. */
 const DAL = {
+  model: 'assets/dal_court.glb', apron: '#012257',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'DAL', team: 'DAL', arena: 'American Airlines Center', city: 'Dallas', real: true,
   floor: { h: 37, s: 54, l: 74, jitter: 5 },
   paint: '#1b6fc2', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -321,6 +327,7 @@ const DAL = {
    Parquet claro, contorno y zonas azul, el círculo de los Timberwolves en el centro, "TIMBERWOLVES" en el fondo y
    "Target CENTER" sobre el parquet. Butacas oscuras con público azul y verde claro. */
 const MIN = {
+  model: 'assets/min_court.glb', apron: '#eed4a9',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'MIN', team: 'MIN', arena: 'Target Center', city: 'Minneapolis', real: true,
   floor: { h: 36, s: 46, l: 76, jitter: 4 },
   paint: '#236192', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -349,6 +356,7 @@ const MIN = {
    Parquet cálido, zonas azules, el escudo naranja de los Knicks en el centro, "KNICKS" en las líneas de fondo y
    "MADISON SQUARE GARDEN" en la banda. Público azul y naranja. */
 const NYK = {
+  model: 'assets/nyk_court.glb', apron: '#0166be',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'NYK', team: 'NYK', arena: 'Madison Square Garden', city: 'Nueva York', real: true,
   floor: { h: 33, s: 62, l: 63, jitter: 6 },
   paint: '#006BB6', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -376,6 +384,7 @@ const NYK = {
    Parquet claro, contorno y zonas azul Thunder, el escudo del Thunder en el centro, "THUNDER" en el fondo y
    "Paycom CENTER" sobre el parquet. Butacas azules y público azul. */
 const OKC = {
+  model: 'assets/okc_court.glb', apron: '#017dc3',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'OKC', team: 'OKC', arena: 'Paycom Center', city: 'Oklahoma City', real: true,
   floor: { h: 38, s: 44, l: 80, jitter: 4 },
   paint: '#007AC1', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -404,6 +413,7 @@ const OKC = {
    Parquet claro, zonas rojas, contorno negro con "CHICAGO" y "BULLS" en las líneas de fondo, el toro rojo en el centro
    y "UNITED CENTER" en la banda. Tribuna roja y negra con los banners de los seis títulos. */
 const CHI = {
+  model: 'assets/chi_court.glb', apron: '#e3c193',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'CHI', team: 'CHI', arena: 'United Center', city: 'Chicago', real: true,
   floor: { h: 38, s: 50, l: 77, jitter: 4 },
   paint: '#CE1141', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -431,6 +441,7 @@ const CHI = {
    Parquet claro, zonas naranjas, contorno violeta con "PHOENIX" y "SUNS" naranja, el sol de los Suns en el centro y
    "Footprint CENTER" sobre el parquet. Tribuna violeta y naranja. */
 const PHX = {
+  model: 'assets/phx_court.glb', apron: '#0a0a0c',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'PHX', team: 'PHX', arena: 'Footprint Center', city: 'Phoenix', real: true,
   floor: { h: 38, s: 55, l: 76, jitter: 4 },
   paint: '#E56020', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -459,6 +470,7 @@ const PHX = {
    Parquet gris claro, zonas gris, líneas y contorno negros (el borde en blanco), el escudo blanco y negro en el centro,
    "Brooklyn Nets" blanco en las bandas y "BARCLAYS CENTER" celeste sobre el parquet. Tribuna toda negra y gris. */
 const BKN = {
+  model: 'assets/bkn_court.glb', apron: '#0a0a0c',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'BKN', team: 'BKN', arena: 'Barclays Center', city: 'Brooklyn', real: true,
   floor: { h: 40, s: 7, l: 80, jitter: 3 },
   paint: '#8d8f92', paintRough: 0.55, lineColor: '#111114', edgeColor: '#ffffff',
@@ -486,6 +498,7 @@ const BKN = {
    Parquet claro cálido, contorno y zonas azul Magic, el escudo de las estrellas en el centro, "MAGIC" en el fondo y
    "KIA CENTER" en la banda. Butacas azules y público azul y plateado. */
 const ORL = {
+  model: 'assets/orl_court.glb', apron: '#0064d3',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'ORL', team: 'ORL', arena: 'Kia Center', city: 'Orlando', real: true,
   floor: { h: 38, s: 55, l: 74, jitter: 5 },
   paint: '#0b6bc0', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -513,6 +526,7 @@ const ORL = {
    Parquet crema, zonas rojas, contorno negro con vivos amarillo lima, el halcón rojo en el centro, "HAWKS" en el fondo y
    "State Farm ARENA" en la banda. Tribuna roja y negra. */
 const ATL = {
+  model: 'assets/atl_court.glb', apron: '#101012',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'ATL', team: 'ATL', arena: 'State Farm Arena', city: 'Atlanta', real: true,
   floor: { h: 40, s: 48, l: 80, jitter: 4 },
   paint: '#E03A3E', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -540,6 +554,7 @@ const ATL = {
    Parquet dorado intenso, zonas naranja, contorno oscuro, la pelota en llamas en el centro, "HEAT" en el fondo y
    "KASEYA CENTER" en la banda. Tribuna de público blanco (White Hot) con rojo. */
 const MIA = {
+  model: 'assets/mia_court.glb', apron: '#08080a',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'MIA', team: 'MIA', arena: 'Kaseya Center', city: 'Miami', real: true,
   floor: { h: 41, s: 80, l: 63, jitter: 5 },
   paint: '#f0951c', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -566,6 +581,7 @@ const MIA = {
    Parquet claro, zonas azul cielo, contorno azul noche, el oso en el centro, "GRIZZLIES" en el fondo y "FedExForum" en
    la banda. Tribuna oscura con público azul y gris. */
 const MEM = {
+  model: 'assets/mem_court.glb', apron: '#0f2650',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'MEM', team: 'MEM', arena: 'FedExForum', city: 'Memphis', real: true,
   floor: { h: 36, s: 30, l: 80, jitter: 4 },
   paint: '#7aa0dc', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -593,6 +609,7 @@ const MEM = {
    Parquet claro, zonas del mismo parquet con las alas del pelícano, contorno azul noche con "NEW ORLEANS PELICANS" en el
    fondo, el escudo en el centro y "Smoothie King CENTER" en rojo sobre el parquet. */
 const NOP = {
+  model: 'assets/nop_court.glb', apron: '#001540',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'NOP', team: 'NOP', arena: 'Smoothie King Center', city: 'Nueva Orleans', real: true,
   floor: { h: 30, s: 58, l: 77, jitter: 5 },
   paint: '#d8a876', paintRough: 0.5, lineColor: '#0C2340', edgeColor: '#ffffff',
@@ -621,6 +638,7 @@ const NOP = {
    Parquet claro, zonas rojas, contorno rojo de un lado ("PORTLAND") y negro del otro ("TRAIL BLAZERS"), el molinete
    de los Blazers en el centro y "moda center" sobre el parquet. Tribuna roja y negra. */
 const POR = {
+  model: 'assets/por_court.glb', apron: '#0c0c0e',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'POR', team: 'POR', arena: 'Moda Center', city: 'Portland', real: true,
   floor: { h: 38, s: 52, l: 80, jitter: 4 },
   paint: '#d4202c', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -648,6 +666,7 @@ const POR = {
    Parquet claro, zonas y contorno azul marino, el escudo circular de los Clippers en el centro, "INTUIT DOME" celeste
    sobre el parquet y "LA CLIPPERS" en la banda. Público azul marino, rojo y blanco. */
 const LAC = {
+  model: 'assets/lac_court.glb', apron: '#0c1c4d',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'LAC', team: 'LAC', arena: 'Intuit Dome', city: 'Inglewood', real: true,
   floor: { h: 38, s: 50, l: 80, jitter: 3 },
   paint: '#0f2a52', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -675,6 +694,7 @@ const LAC = {
    Parquet claro, zonas y contorno violeta, el escudo del Kings (corona, "KINGS" y pelota gris) en el centro,
    "SACRAMENTO" blanco en las líneas de fondo, "SACRAMENTO PROUD" y "KINGS.COM" en las bandas y "Golden1 CENTER" sobre el parquet. */
 const SAC = {
+  model: 'assets/sac_court.glb', apron: '#5b2b81',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'SAC', team: 'SAC', arena: 'Golden 1 Center', city: 'Sacramento', real: true,
   floor: { h: 38, s: 52, l: 79, jitter: 4 },
   paint: '#5A2D81', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -703,6 +723,7 @@ const SAC = {
    Parquet claro con las zonas del mismo parquet (apenas marcadas), contorno azul noche, el escudo con las piquetas y
    la pelota en el centro, "NUGGETS" dorado en el fondo, "MILE HIGH BASKETBALL" en la banda y "Ball Arena" sobre el parquet. */
 const DEN = {
+  model: 'assets/den_court.glb', apron: '#94663a',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'DEN', team: 'DEN', arena: 'Ball Arena', city: 'Denver', real: true,
   floor: { h: 38, s: 46, l: 80, jitter: 3 },
   paint: '#dcc08e', paintRough: 0.5, lineColor: '#7a4b2a', edgeColor: '#ffffff',
@@ -731,6 +752,7 @@ const DEN = {
    Parquet claro, contorno rojo, zonas azules, el escudo de la pelota en el centro, "DETROIT PISTONS" blanco en el fondo
    y "DETROIT" en la banda. Tribuna azul y roja. */
 const DET = {
+  model: 'assets/det_court.glb', apron: '#c80f2e',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'DET', team: 'DET', arena: 'Little Caesars Arena', city: 'Detroit', real: true,
   floor: { h: 35, s: 60, l: 74, jitter: 5 },
   paint: '#1D42BA', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -757,6 +779,7 @@ const DET = {
    Parquet claro, contorno y zonas azul royal, el "76" con las trece estrellas en el centro, "Philadelphia" blanco en el
    fondo, "Brotherly Love" en la banda y "WELLS FARGO CENTER" dorado sobre el parquet. */
 const PHI = {
+  model: 'assets/phi_court.glb', apron: '#006cb7',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'PHI', team: 'PHI', arena: 'Wells Fargo Center', city: 'Filadelfia', real: true,
   floor: { h: 40, s: 55, l: 82, jitter: 3 },
   paint: '#1a4aa0', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -784,6 +807,7 @@ const PHI = {
    Parquet dorado claro, zonas rojas, contorno rojo con "RAPTORS" y "WE THE NORTH" en negro, la garra de los Raptors en
    negro en el centro. Tribuna oscura con público rojo, blanco y negro. */
 const TOR = {
+  model: 'assets/tor_court.glb', apron: '#cf1141',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'TOR', team: 'TOR', arena: 'Scotiabank Arena', city: 'Toronto', real: true,
   floor: { h: 44, s: 58, l: 74, jitter: 5 },
   paint: '#CE1141', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -810,6 +834,7 @@ const TOR = {
    Parquet claro con el área del arco de tres en madera oscura (arcFill), zonas rojas, contorno azul grisáceo con
    "Wizards" blanco en el fondo, "DMV" y "Capital One Arena" sobre el parquet, y el escudo en el centro. */
 const WAS = {
+  model: 'assets/was_court.glb', apron: '#012b5d',     // cancha 3D calibrada (tools/calibrar_cancha.py): piso con líneas y logos + soportes y tableros; apron = color del contorno
   id: 'WAS', team: 'WAS', arena: 'Capital One Arena', city: 'Washington D. C.', real: true,
   floor: { h: 37, s: 56, l: 73, jitter: 6 },
   paint: '#c01f3a', paintRough: 0.5, lineColor: '#ffffff', edgeColor: '#ffffff',
@@ -834,6 +859,25 @@ const WAS = {
   banners: { bg: '#002B5C', fg: '#ffffff', trim: '#E31837', list: [{ l1: 'NBA', l2: 'CHAMPIONS', year: 1978 }] },
   board: { title: 'CAPITAL ONE ARENA', top: '#0d2347', bottom: '#050a14', accent: '#E31837', bar: '#0b1530' },
   tableCol: '#002B5C', wall: 0x0d111c, roof: 0x1f2430, sky: 0x070a12,
+};
+
+/* ---- All-Star 2026 (Los Angeles) · fondo de la apertura de sobres de Ultimate Team ----
+   Cancha 3D calibrada (assets/asg_court.glb) con tribuna genérica en los colores del All-Star. No es de ningún equipo y no está en REAL
+   (no aparece en Entrenamiento): la usa ultimate/packs3d.js de fondo mientras se abre el sobre y las cartas comunes.
+   Los walkouts (media 86+) siguen mostrando la cancha del equipo del jugador. */
+export const ALLSTAR = {
+  id: 'ASG', team: null, arena: 'NBA All-Star 2026', city: 'Los Angeles', real: false,
+  floor: { h: 34, s: 52, l: 62, jitter: 7 },             // respaldo si el GLB no carga
+  paint: '#9a6a38', paintRough: 0.5,
+  logo: { team: null, size: 3.3 },
+  floorTexts: [],
+  model: 'assets/asg_court.glb', apron: '#0d1336',
+  led: { text: 'NBA ALL-STAR 2026  ★  LOS ANGELES  ★  ', bg: '#0a1030', fg: '#ffffff', accent: '#d63048' },
+  seats: { lower: '#2a3c82', upper: '#121a44', accent: '#d63048' },
+  crowd: [['#d63048', 0.26], ['#2f58c0', 0.26], ['#f2f2f2', 0.2], ['#15171c', 0.1], ['#8b95a5', 0.18]],
+  banners: null,
+  board: { title: 'NBA ALL-STAR 2026', top: '#17225a', bottom: '#070b16', accent: '#d63048', bar: '#0a1030' },
+  tableCol: '#101a4a', wall: 0x10141f, roof: 0x2b2a30, sky: 0x0a0f1d,
 };
 
 const REAL = [GSW, IND, CHA, UTA, SAS, LAL, CLE, HOU, MIL, BOS, DAL, MIN, NYK, OKC, CHI, PHX, BKN, ORL, ATL, MIA, MEM, NOP, POR, LAC, SAC, DEN, DET, PHI, TOR, WAS];                                // <- acá se suman las próximas canchas
@@ -861,8 +905,9 @@ function generic(team) {
 const gcache = new Map();
 /** Cancha de un equipo (la real si existe; si no, una genérica con sus colores). */
 export function courtFor(team) {
-  const t = typeof team === 'string' ? TEAMS.find(x => x.ab === team) : team;
+  const t = typeof team === 'string' ? [...TEAMS, ...ALLSTAR_TEAMS].find(x => x.ab === team) : team;
   if (!t) return GSW;
+  if (t.allstar || t.ab === 'ASR' || t.ab === 'ASB') return ALLSTAR;                 // los equipos All-Star del Partido casual juegan en la cancha del All-Star (asg_court.glb)
   if (byTeam.has(t.ab)) return byTeam.get(t.ab);
   if (!gcache.has(t.ab)) gcache.set(t.ab, generic(t));
   return gcache.get(t.ab);

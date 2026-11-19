@@ -1,6 +1,6 @@
 import * as UI from './ui.js';
 import * as Pad from './gamepad.js';
-import { TEAMS } from './teams.js';
+import { CASUAL_TEAMS as TEAMS } from './teams.js';
 import { courtFor } from './courts.js';
 import { loadRoster, fallbackRoster, POS, ATTRS, inchesToFtIn } from './roster.js';
 import { kitsFor, kitById, kitsClash, autoKit, kitSVG, kitArt, nickname, lum } from './kits.js';
