@@ -1,6 +1,7 @@
 import { cardUrl } from './cardzip.js';
 import { PLAYERS } from './data/players.js';
-import { TEAMS } from '../teams.js';
+import { ICON_BY_ID } from './data/icons.js';
+import { TEAMS, ALLSTAR_TEAMS } from '../teams.js';
 import * as Auth from '../auth.js';
 import { loadRoster, normalizePlayer, fallbackRoster, ATTRS, POS } from '../roster.js';
 
@@ -17,11 +18,13 @@ import { loadRoster, normalizePlayer, fallbackRoster, ATTRS, POS } from '../rost
    ========================================================================== */
 
 export { POS };
-export const CARDS = PLAYERS.map(p => ({ ...p }));
+/** v65 · ÍCONOS: las cartas ICON_* (92–110 de media) tienen su propia rareza, su propio precio y salen muy poco de los sobres. */
+export const isIcon = c => !!c && (c.ic === true || String(c.id || c).startsWith('ICON_'));
+export const CARDS = PLAYERS.map(p => ({ ...p, ...(String(p.id).startsWith('ICON_') ? { ic: true } : {}) }));
 export const BY_ID = new Map(CARDS.map(c => [c.id, c]));
 export { cardsReady } from './cardzip.js';
 export const cardImg = id => cardUrl(id);
-export const teamOf = ab => TEAMS.find(t => t.ab === ab) || TEAMS[0];
+export const teamOf = ab => TEAMS.find(t => t.ab === ab) || ALLSTAR_TEAMS.find(t => t.ab === ab) || TEAMS[0];
 export const nick = ab => String(teamOf(ab).name).split(' ').slice(-1)[0];
 export const logoOf = ab => `logos/${ab}.png`;
 
@@ -33,9 +36,12 @@ export const TIERS = [
   { k: 'elite', name: 'Élite', min: 86, max: 89, col: '#4fc3ff' },
   { k: 'estrella', name: 'Estrella', min: 90, max: 94, col: '#b06bff' },
   { k: 'leyenda', name: 'Leyenda', min: 95, max: 99, col: '#ff5ac8' },
+  { k: 'icono', name: 'Ícono', min: 100, max: 110, col: '#f5d27a' },          // solo las cartas ICON_* (no se mide por la media: hay íconos de 92 a 110)
 ];
 export const tierIdx = o => { const i = TIERS.findIndex(t => o >= t.min && o <= t.max); return i < 0 ? 0 : i; };
 export const tierOf = o => TIERS[tierIdx(o)];
+/** Rareza de una CARTA (los íconos siempre son 'Ícono', tengan la media que tengan). */
+export const tierOfCard = c => (isIcon(c) ? TIERS[6] : tierOf(c.o));
 export const WALKOUT = 86;
 
 /* ---- precios ---- (curva por tramos: las buenas valen MUCHO; Wembanyama / Jokic 99 ≈ 500.000) ---- */
@@ -48,7 +54,17 @@ export const value = o => {
   }
   return VAL_PTS[VAL_PTS.length - 1][1];
 };                                                                                                   // valor "justo" de mercado
-export const QUICK_SELL = 500;
+/* Íconos: valen MUCHO más que cualquier otra carta (un 92 ya sale más caro que un 99 común; Jordan 110 ≈ 2.000.000). */
+const ICON_PTS = [[92, 350000], [95, 450000], [99, 700000], [104, 1100000], [110, 2000000]];
+export const iconValue = o => {
+  if (o <= ICON_PTS[0][0]) return ICON_PTS[0][1];
+  for (let i = 1; i < ICON_PTS.length; i++) { const [o1, v1] = ICON_PTS[i - 1], [o2, v2] = ICON_PTS[i]; if (o <= o2) return Math.round(v1 * Math.pow(v2 / v1, (o - o1) / (o2 - o1)) / 1000) * 1000; }
+  return ICON_PTS[ICON_PTS.length - 1][1];
+};
+/** Valor justo de una CARTA (usa la curva de íconos si lo es). */
+export const valueOf = c => (isIcon(c) ? iconValue(c.o) : value(c.o));
+export const QUICK_SELL = 500, ICON_QUICK_SELL = 25000;
+export const quickSellOf = c => (isIcon(c) ? ICON_QUICK_SELL : Math.min(QUICK_SELL, value(c.o)));
 export const quickSell = o => Math.min(QUICK_SELL, value(o));                                       // descarte: igual para todos (500 monedas, o menos si la carta vale menos); lo que importa es el mercado
 export const fmt = n => Math.round(n).toLocaleString('es-AR');
 
@@ -113,6 +129,16 @@ async function doLink() {
     return best?.p || null;
   };
   const order = [...CARDS].sort((a, b) => b.o - a.o);
+  /* v65 · íconos: su jugador está en los planteles All-Star (tabla `players`, equipos ASR / ASB, 009_all_star_iconos.sql) o, si no hay base, en ultimate/data/icons.js.
+     Se enlazan por id (nunca por apellido: hay dos Malone, Magic Johnson no es Johnson de ATL, etc.). */
+  const asPool = [];
+  await Promise.all(ALLSTAR_TEAMS.map(t => loadRoster(t).then(r => { for (const p of [...r.starters, ...r.bench]) if (!p.generic) asPool.push(p); }).catch(() => {})));
+  for (const c of CARDS) {
+    if (!isIcon(c)) continue;
+    const ic = ICON_BY_ID.get(c.id); if (!ic) continue;
+    const hit = asPool.find(p => norm(p.name) === norm(ic.name));
+    LINK.set(c.id, hit || normalizePlayer(ic.row, teamOf(ic.side), 0));
+  }
   for (const c of order) {                                         // 1) enlace explícito
     const id = EXPLICIT.get(c.id);
     if (id && byId.has(id)) { LINK.set(c.id, byId.get(id)); used.add(byId.get(id).id); }
@@ -154,7 +180,7 @@ export function attrGroups(card) {
 }
 
 /* ============================== cartas para sobres / rivales ============================== */
-export const TIER_BUCKETS = TIERS.map(t => CARDS.filter(c => c.o >= t.min && c.o <= t.max));
+export const TIER_BUCKETS = TIERS.map((t, i) => CARDS.filter(c => (i === 6 ? isIcon(c) : !isIcon(c) && c.o >= t.min && c.o <= t.max)));   // el 7º balde son los íconos
 
 /** Rival armado con cartas reales: 5 titulares por posición cerca de `rating` y 5 suplentes algo más bajos. */
 export function makeOpponent(rating, seed = Math.random()) {

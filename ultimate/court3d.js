@@ -1,4 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/loaders/GLTFLoader.js';
 import { buildArena } from '../arena.js';
 import { courtFor } from '../courts.js';
 
@@ -9,6 +10,31 @@ export const COURT_X = 7.62, COURT_Z = 14.325, HOOP_Z = 12.75, RIM_Y = 3.05;
 const RIM_R = 0.2286 + 0.0095;
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const mat = (c, r = 0.8) => new THREE.MeshStandardMaterial({ color: c, roughness: r });
+
+/* Canchas 3D (assets/*_court.glb, calibradas al juego: líneas en ±14,325 / ±7,62 y aros en ±12,75). Se bajan una sola vez y se comparten entre mundos
+   (cada mundo usa un clon); freeCourtModels() libera la memoria de la GPU cuando se termina de usar. */
+const MODELS = new Map();
+export function warmCourt(path) {
+  let p = MODELS.get(path);
+  if (!p) {
+    p = new GLTFLoader().loadAsync(path).then(g => {
+      g.scene.traverse(o => { if (!o.isMesh) return; const m = o.material; if (o.name === 'piso') { m.roughness = 0.45; m.metalness = 0; } else if (m.metalness > 0.2) m.metalness = 0.1; if (m.map) m.map.anisotropy = 8; });
+      return g.scene;
+    });
+    MODELS.set(path, p); p.catch(() => MODELS.delete(path));
+  }
+  return p;
+}
+export function freeCourtModel(path) {                 // libera solo una cancha (la del walkout que terminó) sin tocar las demás
+  const p = MODELS.get(path); if (!p) return; MODELS.delete(path);
+  p.then(sc => sc.traverse(o => { o.geometry?.dispose?.(); for (const m of [].concat(o.material || [])) { m.map?.dispose?.(); m.dispose?.(); } })).catch(() => {});
+}
+export function freeCourtModels() {
+  for (const [k, p] of [...MODELS]) {
+    MODELS.delete(k);
+    p.then(sc => sc.traverse(o => { o.geometry?.dispose?.(); for (const m of [].concat(o.material || [])) { m.map?.dispose?.(); m.dispose?.(); } })).catch(() => {});
+  }
+}
 
 function woodTexture(f) {
   const c = document.createElement('canvas'); c.width = c.height = 512;
@@ -28,10 +54,12 @@ function buildHoop(def, ledColor) {
   const metal = mat(0x2a2e36, 0.45), pad = mat(0x14161b, 0.9);
   /* base acolchada con el escudo del equipo, poste y brazo */
   const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 2.1, 0.8), pad); base.position.set(0, 1.05, poleZ); g.add(base);
-  const lg = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62), new THREE.MeshBasicMaterial({ transparent: true }));
-  lg.position.set(0, 1.2, poleZ + 0.405);
-  new THREE.TextureLoader().load(`logos/${def.team}.png`, t => { t.colorSpace = THREE.SRGBColorSpace; lg.material.map = t; lg.material.needsUpdate = true; });
-  g.add(lg);
+  if (def.team) {                                    // las canchas sin equipo (All-Star) no llevan escudo en la base
+    const lg = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62), new THREE.MeshBasicMaterial({ transparent: true }));
+    lg.position.set(0, 1.2, poleZ + 0.405);
+    new THREE.TextureLoader().load(`logos/${def.team}.png`, t => { t.colorSpace = THREE.SRGBColorSpace; lg.material.map = t; lg.material.needsUpdate = true; });
+    g.add(lg);
+  }
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 3.2, 14), metal); pole.position.set(0, 3.2, poleZ); g.add(pole);
   const armLen = Math.abs(poleZ - bz);
   const arm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, armLen), metal); arm.position.set(0, 3.43, (poleZ + bz) / 2); g.add(arm);
@@ -55,11 +83,13 @@ function buildHoop(def, ledColor) {
   net.add(new THREE.LineSegments(ng, new THREE.LineBasicMaterial({ color: 0xffffff })));
   const cone = new THREE.CylinderGeometry(top, bot, h, N, 1, true); cone.translate(0, -h / 2, 0);
   net.add(new THREE.Mesh(cone, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false })));
-  return { group: g, net, glass, led, rim: V(0, RIM_Y, hz), board: V(0, 3.43, bz) };
+  const parts = g.children.filter(o => o !== rim && o !== br && o !== net);      // lo que reemplaza un GLB (base, poste, brazo, tablero, marco, cuadrado); el aro y la red se quedan
+  return { group: g, net, glass, led, parts, rim: V(0, RIM_Y, hz), board: V(0, 3.43, bz) };
 }
 
-export function createCourtWorld(team) {
-  const def = courtFor(team), scene = new THREE.Scene();
+/** `team` = abreviatura / equipo, o directamente una cancha de courts.js (ej. ALLSTAR). opts.model = true usa el GLB de la cancha si tiene (def.model); `world.ready` resuelve cuando ya se puso. */
+export function createCourtWorld(team, opts = {}) {
+  const def = team && team.floor ? team : courtFor(team), scene = new THREE.Scene(), gfx = [];
   scene.background = new THREE.Color(0x0a0f1d); scene.fog = new THREE.Fog(0x0a0f1d, 45, 170);
   const hemi = new THREE.HemisphereLight(0xdfe8ff, 0x3a4658, 1.5), sun = new THREE.DirectionalLight(0xffffff, 2.4);
   sun.position.set(6, 30, 10); scene.add(hemi, sun);
@@ -71,7 +101,7 @@ export function createCourtWorld(team) {
   const lineC = def.lineColor || '#ffffff', edgeC = def.edgeColor || lineC;
   const line = (pts, edge = false, r = 0.025) => {
     const m = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map(p => V(...p))), Math.max(2, pts.length * 3), r, 6, false), mat(edge ? edgeC : lineC, 0.6));
-    m.position.y = 0.015; scene.add(m);
+    m.position.y = 0.015; scene.add(m); gfx.push(m);
   };
   const seg = (x1, z1, x2, z2, edge = false) => line([[x1, 0, z1], [x2, 0, z2]], edge);
   const arc = (cx, cz, r, a0, a1, n = 48) => { const p = []; for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; p.push([cx + Math.cos(a) * r, 0, cz + Math.sin(a) * r]); } line(p); };
@@ -80,7 +110,7 @@ export function createCourtWorld(team) {
   seg(-COURT_X, 0, COURT_X, 0); arc(0, 0, 1.83, 0, Math.PI * 2, 64);
   for (const s of [-1, 1]) {
     const key = new THREE.Mesh(new THREE.PlaneGeometry(4.88, 5.79), mat(def.paint, def.paintRough ?? 0.5));
-    key.rotation.x = -Math.PI / 2; key.position.set(0, 0.004, s * (COURT_Z - 5.79 / 2)); scene.add(key);
+    key.rotation.x = -Math.PI / 2; key.position.set(0, 0.004, s * (COURT_Z - 5.79 / 2)); scene.add(key); gfx.push(key);
     const ft = s * (COURT_Z - 5.79);
     seg(-2.44, s * COURT_Z, -2.44, ft); seg(2.44, s * COURT_Z, 2.44, ft); seg(-2.44, ft, 2.44, ft); arc(0, ft, 1.83, 0, Math.PI * 2, 40);
     const phi = Math.asin(6.7 / 7.24), zc = s * (HOOP_Z - 7.24 * Math.cos(phi));
@@ -90,12 +120,23 @@ export function createCourtWorld(team) {
   const arena = buildArena(scene, def);
   const hoop = buildHoop(def, def.led?.accent || '#ff5a1f'); scene.add(hoop.group);
   const base = new THREE.Color(def.led?.accent || '#ff5a1f');
+  /* cancha 3D: reemplaza el parquet, las líneas, la pintura, el logo y los soportes del mundo (el aro y la red con animación siguen siendo los de acá) */
+  let modelObj = null, dead = false;
+  const useModel = on => {
+    gfx.forEach(m => { m.visible = !on; }); (arena.floorGfx || []).forEach(m => { m.visible = !on; }); hoop.parts.forEach(m => { m.visible = !on; });
+    if (on) { floorMat.map?.dispose(); floorMat.map = null; floorMat.color.set(def.apron || '#0d1336'); floorMat.needsUpdate = true; }
+  };
+  const ready = opts.model && def.model
+    ? warmCourt(def.model).then(src => { if (dead) return false; modelObj = src.clone(true); scene.add(modelObj); useModel(true); return true; })
+        .catch(e => { console.warn(`No se pudo cargar ${def.model}; sigo con la cancha armada por código.`, e); return false; })
+    : Promise.resolve(false);
   return {
-    scene, arena, def, hoop,
+    scene, arena, def, hoop, ready,
     /* k = 0 estadio a pleno · k = 1 casi a oscuras con un reflector sobre el aro */
     setDim(k) { hemi.intensity = 1.5 * (1 - 0.85 * k); sun.intensity = 2.4 * (1 - 0.88 * k); spot.intensity = 1100 * k; },
     ledFlash(on) { hoop.led.color.set(on ? '#ffffff' : base); },
     dispose() {
+      dead = true; if (modelObj) { scene.remove(modelObj); modelObj = null; }      // el modelo es compartido: lo libera freeCourtModels()
       arena.dispose(); const seen = new Set();
       scene.traverse(o => { o.geometry?.dispose?.(); for (const m of [].concat(o.material || [])) { if (seen.has(m)) continue; seen.add(m); m.map?.dispose?.(); m.dispose?.(); } });
     },

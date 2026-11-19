@@ -1,5 +1,5 @@
 import * as Auth from '../auth.js';
-import { CARDS, BY_ID, TIER_BUCKETS, POS, posOf, posPenalty, value, quickSell, rng, teamRating, makeOpponent, infoFor, fallbackRoster, teamOf, nick, WALKOUT, fmt } from './ut-data.js';
+import { CARDS, BY_ID, TIER_BUCKETS, POS, posOf, posPenalty, value, valueOf, quickSell, quickSellOf, isIcon, rng, teamRating, makeOpponent, infoFor, fallbackRoster, teamOf, nick, WALKOUT, fmt } from './ut-data.js';
 
 /* ============================================================================
    Ultimate Team · estado y reglas (sin pantallas). Todo lo que cambia monedas, cartas o progreso pasa por acá.
@@ -16,23 +16,35 @@ export const msToDayEnd = () => { const e = new Date(); e.setHours(24, 0, 0, 0);
 export const fmtLeft = ms => { const m = Math.floor(ms / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60); return d ? `${d} días ${h} hs` : h ? `${h} hs ${m % 60} min` : `${Math.max(1, m)} min`; };
 
 /* ------------------------------ sobres ------------------------------ */
+/* pr = probabilidad POR CARTA de cada rareza [Base, Plata, Oro, Élite, Estrella, Leyenda, Ícono].
+   Íconos (v65, como en FC 27): solo en los sobres caros y con probabilidad MUY baja (EA muestra "menos del 1%" en sus sobres con Rare Gold; el Pack Rookie no puede traer).
+   Por sobre salen así: Oro ≈ 0,04% · Élite ≈ 0,25% · Especial ≈ 0,9%. Dentro de los íconos, cuanto más alta la media más raro (Jordan 110 es ~25 veces más raro que un 92). */
 export const PACKS = {
-  rookie: { name: 'Pack Rookie', cost: 5000, cur: 'coins', n: 3, min: 0, tr: false, pr: [.935, .060, .0045, .0005, 0, 0], a: '#d08a4a', b: '#3b200c', col: 0xd9a066 },
-  oro: { name: 'Pack Oro', cost: 15000, cur: 'coins', n: 4, min: 76, tr: true, pr: [.62, .31, .0665, .003, .0005, 0], a: '#ffd45a', b: '#6b4a06', col: 0xffd45a },
-  elite: { name: 'Pack Élite', cost: 50000, cur: 'coins', n: 5, min: 80, tr: true, pr: [.24, .38, .35, .027, .0028, .0002], a: '#b06bff', b: '#2a1058', col: 0xb06bff },
-  especial: { name: 'Pack Especial', cost: 200000, cur: 'coins', n: 3, min: 86, tr: true, pr: [0, 0, 0, .90, .096, .004], a: '#4fc3ff', b: '#0b2a5a', col: 0x4fc3ff },
+  rookie: { name: 'Pack Rookie', cost: 5000, cur: 'coins', n: 3, min: 0, tr: false, pr: [.935, .060, .0045, .0005, 0, 0, 0], a: '#d08a4a', b: '#3b200c', col: 0xd9a066 },
+  oro: { name: 'Pack Oro', cost: 15000, cur: 'coins', n: 4, min: 76, tr: true, pr: [.62, .31, .0665, .003, .0005, 0, .0001], a: '#ffd45a', b: '#6b4a06', col: 0xffd45a },
+  elite: { name: 'Pack Élite', cost: 50000, cur: 'coins', n: 5, min: 80, tr: true, pr: [.24, .38, .35, .027, .0028, .0002, .0005], a: '#b06bff', b: '#2a1058', col: 0xb06bff },
+  especial: { name: 'Pack Especial', cost: 200000, cur: 'coins', n: 3, min: 86, tr: true, pr: [0, 0, 0, .90, .096, .004, .003], a: '#4fc3ff', b: '#0b2a5a', col: 0x4fc3ff },
 };
 export const packChance = (pk, i) => +((1 - Math.pow(1 - pk.pr.slice(i).reduce((a, b) => a + b, 0), pk.n)) * 100).toFixed(1);
+/** Chance (en %) de que el sobre traiga al menos un ícono, con 2 decimales (packChance redondea a 1). */
+export const iconChance = pk => +((1 - Math.pow(1 - (pk.pr[6] || 0), pk.n)) * 100).toFixed(2);
+const iconW = c => Math.pow(0.8, c.o - 92);                           // 92 → 1 · 99 → 0,21 · 110 → 0,007
 function roll(pk, min = 0) {
-  const t = pk.pr.map((p, i) => ({ p, c: min ? TIER_BUCKETS[i].filter(x => x.o >= min) : TIER_BUCKETS[i] })).filter(x => x.c.length && x.p > 0);
+  const t = pk.pr.map((p, i) => ({ p, i, c: min ? TIER_BUCKETS[i].filter(x => x.o >= min) : TIER_BUCKETS[i] })).filter(x => x.c.length && x.p > 0);
+  const pickIn = x => {
+    if (x.i !== 6) return x.c[Math.random() * x.c.length | 0];
+    let q = Math.random() * x.c.reduce((a, c) => a + iconW(c), 0);
+    for (const c of x.c) { q -= iconW(c); if (q <= 0) return c; }
+    return x.c[x.c.length - 1];
+  };
   let q = Math.random() * t.reduce((a, x) => a + x.p, 0);
-  for (const x of t) { q -= x.p; if (q <= 0) return x.c[Math.random() * x.c.length | 0]; }
-  return t[t.length - 1].c[0];
+  for (const x of t) { q -= x.p; if (q <= 0) return pickIn(x); }
+  return pickIn(t[t.length - 1]);
 }
 function draw(pk) {
   const a = []; for (let i = 0; i < pk.n; i++) a.push(roll(pk));
   if (Math.max(...a.map(p => p.o)) < pk.min) a[a.length - 1] = roll(pk, pk.min);
-  return a.sort((x, y) => x.o - y.o);
+  return a.sort((x, y) => (isIcon(x) ? -1000 : 0) + x.o - ((isIcon(y) ? -1000 : 0) + y.o));       // v68: el ícono (si sale) va siempre PRIMERO (tiene su propia secuencia: pelota, mate y carta); después siguen las demás de menor a mayor
 }
 
 /* ------------------------------ objetivos ------------------------------ */
@@ -54,7 +66,7 @@ export const OBJ = [
   H('h_rk10', 'Completá las 10 etapas de Rookie Battles', 'rookie_clear', 10, { coins: 6000, packs: ['elite'] }),
   H('h_r80', 'Armá un equipo de media 80+', 'rating', 80, { packs: ['oro'] }, 'max'), H('h_r85', 'Armá un equipo de media 85+', 'rating', 85, { packs: ['elite'] }, 'max'),
   H('h_r90', 'Armá un equipo de media 90+', 'rating', 90, { coins: 10000, packs: ['elite'] }, 'max'),
-  H('h_wo', 'Sacá un walkout (86+) de un sobre', 'walkout', 1, { coins: 2000, }), H('h_div5', 'Llegá a la División 5 de Dream Live', 'divprog', 6, { coins: 5000, packs: ['elite'] }, 'max'),
+  H('h_wo', 'Sacá un walkout (86+) de un sobre', 'walkout', 1, { coins: 2000, }), H('h_icon', 'Sacá un ÍCONO de un sobre', 'icon', 1, { coins: 50000, packs: ['especial'] }), H('h_div5', 'Llegá a la División 5 de Dream Live', 'divprog', 6, { coins: 5000, packs: ['elite'] }, 'max'),
   H('h_win25', 'Ganá 25 partidos', 'win', 25, { coins: 5000, packs: ['oro'] }), H('h_win100', 'Ganá 100 partidos', 'win', 100, { coins: 15000, packs: ['especial'] }),
   H('h_col100', 'Juntá 100 cartas distintas', 'distinct', 100, { coins: 4000 }, 'max'), H('h_col250', 'Juntá 250 cartas distintas', 'distinct', 250, { coins: 10000, packs: ['elite'] }, 'max'),
   H('h_as5', 'Ganá 5 partidos en una All-Star Live', 'allstar_run', 5, { packs: ['elite'] }, 'max'),
@@ -74,10 +86,14 @@ export const DREAM = { perDiv: 15, win: 3, loss: 2, upMin: 4, relegPts: 8, lowes
   ratingOf: d => Math.round(72 + (10 - d) * 2.3), diffOf: d => (d >= 8 ? 'easy' : d <= 2 ? 'extreme' : 'hard'),
   weekly: [[3, { coins: 1000 }], [6, { packs: ['oro'] }], [10, { packs: ['elite'] }], [15, { coins: 5000, packs: ['elite'] }]] };
 /** All-Star Live: entrada 10.000. Clasificatoria de 5 partidos en Difícil (con 2 victorias pasás). Fase final: 10 partidos en Extremo, premio por CADA victoria. */
-export const ALLSTAR = { fee: 10000,
-  qual: { games: 5, need: 2, rating: 84, diff: 'hard', reward: { coins: 2000 }, consolation: { coins: 2500 } },
-  main: { games: 10, diff: 'extreme', ratingOf: g => Math.round(93 + g * 0.6) },
-  rewards: [{ coins: 1500 }, { coins: 2500 }, { coins: 2000, packs: ['oro'] }, { coins: 4000 }, { coins: 3000, packs: ['elite'] }, { coins: 6000 }, { coins: 5000, packs: ['elite'] }, { coins: 9000 }, { coins: 6000, packs: ['elite', 'elite'] }, { coins: 20000, packs: ['elite', 'especial'] }] };
+export const ALLSTAR = { fee: 10000, perDay: 2,           // máximo 2 entradas por día y por usuario (clasificatoria + fase final cuentan como UNA entrada)
+  qual: { games: 5, need: 2, rating: 84, diff: 'hard', reward: { coins: 3000 }, consolation: { coins: 3000 } },
+  /* Fase final: todos los partidos en Extremo, pero el rival es AL AZAR en cada partido (tanto puede tocarte uno flojo como uno muy bueno).
+     Si abandonás, ese partido cuenta como derrota y el siguiente rival se sortea de nuevo. */
+  main: { games: 10, diff: 'extreme', pool: [[.30, 77, 82], [.40, 83, 88], [.25, 89, 94], [.05, 95, 97]],      // [probabilidad, media mínima, media máxima]
+    ratingOf: () => { let q = Math.random(); for (const [p, lo, hi] of ALLSTAR.main.pool) { if ((q -= p) <= 0) return lo + Math.floor(Math.random() * (hi - lo + 1)); } return 90; } },
+  /* Premio por la victoria N de la fase final (de la 5.ª en adelante ya son premios grandes). */
+  rewards: [{ coins: 3000 }, { coins: 4000 }, { coins: 5000, packs: ['oro'] }, { coins: 8000 }, { coins: 20000, packs: ['elite'] }, { coins: 25000, packs: ['elite', 'elite'] }, { coins: 30000, packs: ['elite', 'elite'] }, { coins: 45000, packs: ['elite', 'especial'] }, { coins: 65000, packs: ['elite', 'especial'] }, { coins: 100000, packs: ['elite', 'especial', 'especial'] }] };
 export const SQUADB = { levels: [
   { id: 'facil', name: 'Fácil', rating: 76, diff: 'easy', coins: 400, pts: 1 }, { id: 'normal', name: 'Normal', rating: 83, diff: 'hard', coins: 900, pts: 2 },
   { id: 'dificil', name: 'Difícil', rating: 89, diff: 'hard', coins: 1800, pts: 3 }, { id: 'extremo', name: 'Extremo', rating: 94, diff: 'extreme', coins: 4000, pts: 4 }],
@@ -107,7 +123,7 @@ function newState() {
     coins: 5000, gems: 0, xp: 0, col, untr, squad: { s: st.map(c => c.id), b: bn.map(c => c.id) },
     packs: [{ id: 'welcome1', kind: 'rookie', tr: false }, { id: 'welcome2', kind: 'rookie', tr: false }], mkt: [],
     obj: { day: dayKey(), wk: weekKey(), prog: {}, claimed: {}, daily: [] },
-    modes: { rookie: { stage: 1, stars: {} }, dream: { v: 2, div: 10, pts: 0, streak: 0, wk: weekKey(), w: 0, l: 0, claimed: [] }, allstar: { run: null, best: 0 }, squad: { wk: weekKey(), pts: 0, played: 0, claimed: [] } },
+    modes: { rookie: { stage: 1, stars: {} }, dream: { v: 2, div: 10, pts: 0, streak: 0, wk: weekKey(), w: 0, l: 0, claimed: [] }, allstar: { run: null, best: 0, day: { d: '', n: 0 } }, squad: { wk: weekKey(), pts: 0, played: 0, claimed: [] } },
     ev: { wk: weekKey(), pts: 0, claimed: false }, stats: { p: 0, w: 0, l: 0, pts: 0, pk: 0, wo: 0, bought: 0, sold: 0 }, set: { q: 180 },
   };
 }
@@ -210,6 +226,7 @@ export function openPack(pack) {                                     // pack = {
   for (const c of cards) addCard(c.id, pack.tr);
   S.stats.pk++; track('pack', 1);
   const wo = cards.filter(c => c.o >= WALKOUT).length; if (wo) { S.stats.wo += wo; track('walkout', wo); }
+  const ics = cards.filter(isIcon).length; if (ics) { S.stats.ic = (S.stats.ic || 0) + ics; track('icon', ics); }
   track('distinct', distinct(), true); persist();
   return cards;
 }
@@ -222,7 +239,7 @@ export function buyPack(kind) {
 export function takeStoredPack(id) { const i = S.packs.findIndex(p => p.id === id); if (i < 0) return null; const [p] = S.packs.splice(i, 1); persist(); return p; }
 export function sellQuick(id) {
   if (sellable(id) < 1) return 0;
-  const c = BY_ID.get(id), g = quickSell(c.o); takeCard(id, true); S.coins += g; track('sold_quick', 1); persist(); return g;
+  const c = BY_ID.get(id), g = quickSellOf(c); takeCard(id, true); S.coins += g; track('sold_quick', 1); persist(); return g;
 }
 
 /* ------------------------------ plantilla ------------------------------ */
@@ -261,13 +278,13 @@ export function matchLineup(sq = squadCards(), teamAb = S.club.team) {
 /* ------------------------------ mercado ------------------------------ */
 const hash = s => { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
 export const marketDay = () => dayKey();
-export function mktPrice(c) { const n = (hash(c.id + marketDay() + 'p') % 1000) / 1000; return Math.max(10, Math.round(value(c.o) * (0.88 + 0.26 * n) / 10) * 10); }
-export const onSale = c => hash(c.id + marketDay() + 's') % 100 < 62;
+export function mktPrice(c) { const n = (hash(c.id + marketDay() + 'p') % 1000) / 1000; return Math.max(10, Math.round(valueOf(c) * (0.88 + 0.26 * n) / (isIcon(c) ? 1000 : 10)) * (isIcon(c) ? 1000 : 10)); }
+export const onSale = c => hash(c.id + marketDay() + 's') % 100 < (isIcon(c) ? 8 : 62);     // los íconos casi nunca aparecen en el mercado simulado (8% de los días)
 /** ¿Mercado ONLINE (entre jugadores, Supabase) o simulado (invitados / sin Supabase, como siempre)? */
 export const marketOnline = () => !!(Auth.configured && !Auth.isGuest() && Auth.getProfile()?.id);
 export const priceRange = c => marketOnline()
-  ? [Math.max(10, Math.floor(value(c.o) / 2 / 10) * 10), value(c.o)]                    // tope de venta = valor de la carta (85 → 25.000 · Wemby 99 → 500.000)
-  : [Math.max(10, Math.round(value(c.o) * 0.7 / 10) * 10), value(c.o)];
+  ? [Math.max(10, Math.floor(valueOf(c) / 2 / 10) * 10), valueOf(c)]                    // tope de venta = valor de la carta (85 → 25.000 · Wemby 99 → 500.000)
+  : [Math.max(10, Math.round(valueOf(c) * 0.7 / 10) * 10), valueOf(c)];
 export const MKT_TAX = 0.05, MKT_HOURS = 12, MKT_SLOTS = 12;
 export const ONLINE_HOURS = 72, ONLINE_SLOTS = 20;                          // mercado online: duran 3 días, hasta 20 publicaciones
 export const mktSlots = () => (marketOnline() ? ONLINE_SLOTS : MKT_SLOTS);
@@ -288,7 +305,7 @@ export function listCard(id, price) {
 }
 export function cancelListing(u) { const i = S.mkt.findIndex(x => x.uid === u); if (i < 0) return; const [l] = S.mkt.splice(i, 1); addCard(l.id, true); persist(); }
 /** Minutos que tarda en venderse una publicación (más cara = mucho más lenta). */
-export const sellMinutes = (c, price, r = 0.5) => Math.pow(5, (price / value(c.o) - 0.8) / 0.1) * (0.5 + r);
+export const sellMinutes = (c, price, r = 0.5) => Math.pow(5, (price / valueOf(c) - 0.8) / 0.1) * (0.5 + r);
 /** Vende / vence lo que corresponda. Devuelve los avisos para mostrar. */
 export function settleMarket() {
   if (!S) return []; const msgs = [], now = Date.now(); let ch = false;
@@ -399,10 +416,14 @@ export function planAllStar() {
   if (r.phase === 'qual') return plan('allstar', { rating: A.qual.rating, diff: A.qual.diff, title: `Clasificatoria · partido ${r.qg + 1} de ${A.qual.games}`, sub: 'All-Star Live', meta: { run: true, phase: 'qual' } });
   return plan('allstar', { rating: A.main.ratingOf(r.g), diff: A.main.diff, title: `Fase final · partido ${r.g + 1} de ${A.main.games}`, sub: 'All-Star Live', meta: { run: true, phase: 'main' } });
 }
+/** Entradas que le quedan hoy al All-Star Live (se reinicia cada día a las 00:00). */
+export function allstarLeft() { const a = S.modes.allstar; return a.day?.d === dayKey() ? Math.max(0, ALLSTAR.perDay - (a.day.n || 0)) : ALLSTAR.perDay; }
 export function enterAllStar() {
   const a = S.modes.allstar; if (a.run) return { ok: false, err: 'Ya tenés un torneo en curso.' };
+  if (allstarLeft() <= 0) return { ok: false, err: `Ya jugaste el All-Star Live ${ALLSTAR.perDay} veces hoy. Volvé mañana.` };
   if (S.coins < ALLSTAR.fee) return { ok: false, err: 'No te alcanzan las monedas para la entrada.' };
-  S.coins -= ALLSTAR.fee; a.run = { phase: 'qual', qw: 0, ql: 0, qg: 0, w: 0, l: 0, g: 0, qh: [], mh: [] }; persist(); return { ok: true };
+  if (a.day?.d !== dayKey()) a.day = { d: dayKey(), n: 0 };
+  a.day.n++; S.coins -= ALLSTAR.fee; a.run = { phase: 'qual', qw: 0, ql: 0, qg: 0, w: 0, l: 0, g: 0, qh: [], mh: [] }; persist(); return { ok: true };
 }
 /** Suma el resultado de un partido al torneo. rw = premios del partido (null si abandonó: sin premios). Devuelve el estado para la pantalla de resultado. */
 function allstarApply(win, rw, lines) {
@@ -505,4 +526,4 @@ export function claimWeekly(kind, idx) {
   claimed.push(idx); const out = grant(t[1]); persist(); return out;
 }
 export function claimEvent() { if (S.ev.claimed || S.ev.pts < EVENT.target) return null; S.ev.claimed = true; const out = grant(EVENT.reward); persist(); return out; }
-export { value, quickSell };
+export { value, valueOf, quickSell, quickSellOf };

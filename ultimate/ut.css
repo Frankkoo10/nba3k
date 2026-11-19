@@ -16,7 +16,7 @@
 .u-coin { display: inline-block; width: 18px; height: 18px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff2b0, #ffc73a 55%, #b9780c); border: 2px solid #8a5a0a; vertical-align: -3px; }
 .u-gem { display: inline-block; width: 15px; height: 15px; background: linear-gradient(135deg, #e0b8ff, #8a5cff 60%, #4a22c8); transform: rotate(45deg) scale(.85); vertical-align: -2px; margin: 0 2px; }
 .u-bar { height: 7px; background: #ffffff1c; border-radius: 4px; overflow: hidden; margin: 5px 0 3px; } .u-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--org), var(--gold)); border-radius: 4px; }
-.u-bar.xp { height: 4px; width: 120px; } .u-bar.t-elite i { background: #4fc3ff; } .u-bar.t-estrella i { background: #b06bff; } .u-bar.t-leyenda i { background: #ff5ac8; } .u-bar.t-plata i { background: #c4ccd8; } .u-bar.t-base i { background: #c98a54; }
+.u-bar.xp { height: 4px; width: 120px; } .u-bar.t-elite i { background: #4fc3ff; } .u-bar.t-estrella i { background: #b06bff; } .u-bar.t-leyenda i { background: #ff5ac8; } .u-bar.t-icono i { background: linear-gradient(90deg, #f5d27a, #fff3c2); } .u-bar.t-plata i { background: #c4ccd8; } .u-bar.t-base i { background: #c98a54; }
 .u-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 18px; background: #ffffff14; border: 1px solid #ffffff30; font: 800 15px 'Barlow Condensed', sans-serif !important; letter-spacing: .06em; text-transform: uppercase; }
 .u-btn:hover { background: #ffffff2c; } .u-btn:disabled { opacity: .4; cursor: not-allowed; }
 .u-btn.gold { background: linear-gradient(#ffd569, var(--gold)); color: #161616 !important; border-color: var(--gold); box-shadow: 0 0 18px #ffb81c44; } .u-btn.gold:hover { filter: brightness(1.08); }
@@ -182,3 +182,19 @@
 .as-tile.claimed { border-color: var(--up); background: #3ddc8414; opacity: .85; } .as-tile.claimed b { color: var(--up); } .as-tile .tick { position: absolute; top: 6px; right: 8px; color: var(--up); font-weight: 800; } .as-tile.now { border-color: var(--gold); background: #ffc53d1c; box-shadow: 0 0 16px #ffc53d44; } .as-tile.now b { color: var(--gold); }
 @media (max-width: 1000px) { .as-flow { grid-template-columns: 1fr; } .as-arrow { transform: rotate(90deg); justify-self: center; } .as-ladder { grid-template-columns: repeat(2, 1fr); } }
 .as-stage.lock .pips i.nx { border-color: #ffffff30; color: var(--mute); box-shadow: none; }
+
+/* ---- v65 · Cartas ÍCONO: sin marco ni brillo extra en la colección (se ven igual de prolijas que el resto); el efecto especial queda en la apertura del sobre ---- */
+.u-bar.t-icono i { background: linear-gradient(90deg, #f5d27a, #fff3c2); }
+.odds .ico { color: #f5d27a; text-shadow: 0 0 8px #ffcf5a88; }
+
+/* v68 · estadísticas del ícono (salen una por una mientras pica la pelota) */
+#utStage #stats { left: max(18px, 4vw); right: auto; top: auto; bottom: 150px; width: min(300px, 56vw); text-align: left; opacity: 0; transition: opacity .35s; }
+#utStage #stats.on { opacity: 1; }
+#utStage #stats h4 { margin: 0 0 8px; font: italic 800 34px 'Barlow Condensed', Impact, sans-serif; color: #fff; text-shadow: 0 0 18px #fff8; letter-spacing: .5px; }
+#utStage .st { display: flex; align-items: center; gap: 10px; margin: 5px 0; opacity: 0; transform: translateX(-24px); transition: opacity .3s, transform .3s; }
+#utStage .st.on { opacity: 1; transform: none; }
+#utStage .st b { width: 42px; font: italic 800 22px 'Barlow Condensed', Impact, sans-serif; color: #cfe8ff; }
+#utStage .st span { flex: 1; height: 9px; border-radius: 5px; background: #ffffff26; overflow: hidden; }
+#utStage .st i { display: block; height: 100%; width: 0; border-radius: 5px; background: linear-gradient(90deg, #fff, #ffd45a); box-shadow: 0 0 12px #fff; transition: width .7s cubic-bezier(.2, .9, .3, 1); }
+#utStage .st.on i { width: var(--w); }
+#utStage .st em { width: 40px; text-align: right; font: italic 800 24px 'Barlow Condensed', Impact, sans-serif; color: #fff; }
