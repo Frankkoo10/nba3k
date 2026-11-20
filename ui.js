@@ -1,4 +1,5 @@
 import * as Crowd from './crowd.js';
+import * as Acct from './acct.js';
 import * as Auth from './auth.js';
 import * as Pad from './gamepad.js';
 import * as KB from './keyboard.js';
@@ -24,8 +25,9 @@ const ITEMS = [
 ];
 
 /* ---- configuración guardada en el navegador ---- */
-const SKEY = 'basket3d_settings';
-export const settings = (() => { try { return { sens: 1, diff: 'hard', ...JSON.parse(localStorage.getItem(SKEY) || '{}') }; } catch { return { sens: 1, diff: 'hard' }; } })();
+const SKEY = Acct.scoped('basket3d_settings');
+const DIFF_OLD = { easy: 'rookie', hard: 'pro', extreme: 'allstar' };     // v69: 5 niveles; los ajustes guardados con los nombres viejos se convierten
+export const settings = (() => { let o; try { o = { sens: 1, diff: 'pro', ...JSON.parse(localStorage.getItem(SKEY) || '{}') }; } catch { o = { sens: 1, diff: 'pro' }; } o.diff = DIFF_OLD[o.diff] || o.diff; return o; })();
 export const saveSettings = () => { try { localStorage.setItem(SKEY, JSON.stringify(settings)); } catch { /* sin storage */ } };
 Pad.init(settings, saveSettings);
 KB.init(settings, saveSettings);
@@ -99,7 +101,7 @@ function renderPadInfo() {
 export function openSettings() {
   renderPadInfo(); $('setLogout').hidden = !$('pause').hidden;          // en plena pausa no tiene sentido cerrar sesión
   $('setSens').value = settings.sens; $('setSensV').textContent = `${settings.sens.toFixed(1)}×`;
-  const cv = settings.crowd ?? 0.8; $('setCrowd').value = cv; $('setCrowdV').textContent = `${Math.round(cv * 100)}%`;
+
   $('settings').hidden = false;
 }
 function closeSettings() { $('settings').hidden = true; }
@@ -148,7 +150,6 @@ export async function boot(handlers) {
   $('setRumble').onchange = e => { settings.rumble = e.target.checked; saveSettings(); };
   $('setDead').oninput = e => { settings.dead = +e.target.value; $('setDeadV').textContent = settings.dead.toFixed(2); saveSettings(); };
   Pad.onConnect(() => { if (!$('settings').hidden) setTimeout(renderPadInfo, 50); if (mainOpen) setTimeout(renderMainHints, 50); });
-  $('setCrowd').oninput = e => { settings.crowd = +e.target.value; $('setCrowdV').textContent = `${Math.round(settings.crowd * 100)}%`; Crowd.setVolume(settings.crowd); saveSettings(); };
   $('setSens').oninput = e => { settings.sens = +e.target.value; $('setSensV').textContent = `${settings.sens.toFixed(1)}×`; saveSettings(); };
   $('setLogout').onclick = async () => { closeSettings(); await Auth.signOut(); showAuth(); };
   $('setFull').onclick = async () => { try { await document.documentElement.requestFullscreen(); await navigator.keyboard?.lock?.(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ControlLeft', 'KeyQ', 'KeyE']); } catch (e) { console.warn(e); } };

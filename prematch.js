@@ -1,10 +1,11 @@
 import * as UI from './ui.js';
+import * as Acct from './acct.js';
 import * as Pad from './gamepad.js';
 import { CASUAL_TEAMS as TEAMS } from './teams.js';
 import { courtFor } from './courts.js';
 import { loadRoster, fallbackRoster, POS, ATTRS, inchesToFtIn } from './roster.js';
 import { kitsFor, kitById, kitsClash, autoKit, kitSVG, kitArt, nickname, lum } from './kits.js';
-import { STYLE_DEFAULT } from './ai.js';
+import { STYLE_DEFAULT, DIFFS, normDiff } from './ai.js';
 import { fitCfg, project } from './stagecam.js';
 
 /* ============================================================================
@@ -17,7 +18,7 @@ import { fitCfg, project } from './stagecam.js';
 const $ = id => document.getElementById(id);
 const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const clampN = (v, a, b) => Math.min(b, Math.max(a, v));
-const SKEY = 'basket3d_setup';
+const SKEY = Acct.scoped('basket3d_setup');
 const STEPS = [
   ['Jugadores', 'Cantidad de jugadores', 'Elegí cómo vas a jugar.'],
   ['Equipos', 'Seleccioná tu equipo', 'Elegí los equipos para el partido.'],
@@ -134,7 +135,7 @@ const OPT = {
     if (S.online) { const h = S.online.role === 'host' ? S.teamA : S.teamB, g = S.online.role === 'host' ? S.teamB : S.teamA; return [['home', `Anfitrión · ${nm(h)}`], ['away', `Invitado · ${nm(g)}`]]; }
     return [['home', `Local · ${nm(S.teamA)}`], ['away', `Visitante · ${nm(S.teamB)}`]];
   },
-  diff: [['easy', 'Fácil'], ['hard', 'Difícil'], ['extreme', 'Extremo']],
+  diff: DIFFS,
   qLen: [['60', '1 min'], ['120', '2 min'], ['180', '3 min'], ['300', '5 min'], ['480', '8 min']],
   shotClock: YN, fatigue: YN, autoSubs: YN,
   cam: [['0', '2K'], ['1', 'TV'], ['2', 'Libre']],
@@ -146,7 +147,6 @@ const MATCH_ALL = [
   ['qLen', 'Duración del cuarto', 'Cuatro cuartos. Si hay empate, tiempo suplementario.'],
   ['shotClock', 'Reloj de 24 segundos', 'Si lo apagás, no hay violación de 24 s.'],
   ['fatigue', 'Cansancio', 'Correr y driblear gasta energía. Apagado = energía infinita.'],
-  ['autoSubs', 'Cambios automáticos', 'En las pausas entran los suplentes por los más cansados.'],
   ['cam', 'Cámara inicial', 'Después la cambiás con la tecla C.'],
   ['camHeight', 'Altura de cámara 2K', 'Ajustá el ángulo vertical: más baja o más alta.'],
 ];
@@ -159,8 +159,8 @@ const STYLE_ROWS = [
   ['def', 'Defensa', [['loose', 'Suelta'], ['normal', 'Normal'], ['pressure', 'Presión']], 'Presión sobre el rival (cansa más).'],
 ];
 const optsOf = key => key.startsWith('style.') ? STYLE_ROWS.find(r => 'style.' + r[0] === key)[2] : OPT[key];
-const curVal = key => key.startsWith('style.') ? S.style[key.slice(6)] : key === 'diff' ? (S.online ? S.online.settings.diff : UI.settings.diff) : S[key];
-const LOCKED = new Set(['court', 'diff', 'qLen', 'shotClock', 'fatigue', 'autoSubs']);       // en una sala las define el anfitrión
+const curVal = key => key.startsWith('style.') ? S.style[key.slice(6)] : key === 'diff' ? normDiff(S.online ? S.online.settings.diff : UI.settings.diff) : S[key];
+const LOCKED = new Set(['court', 'diff', 'qLen', 'shotClock', 'fatigue']);       // en una sala las define el anfitrión
 const labelOf = key => (optsOf(key).find(([v]) => String(curVal(key)) === v) || [0, '-'])[1];
 
 function setOpt(key, val) {
@@ -831,7 +831,7 @@ function renderSummary() {
   const style = STYLE_ROWS.map(([k]) => labelOf('style.' + k)).join(' · ');
   el.innerHTML = `<div class="fc-sumvs">${side('A')}<strong>VS</strong>${side('B')}</div>
     <ul><li><span>Cancha</span><b>${courtFor(courtTeamNow()).arena}</b></li>${S.online ? '' : `<li><span>Jugadores</span><b>${S.players}</b></li>`}${S.online ? '' : `<li><span>Dificultad</span><b>${labelOf('diff')}</b></li>`}<li><span>Cuartos</span><b>4 × ${labelOf('qLen')}</b></li><li><span>Cámara</span><b>${labelOf('cam')} · ${labelOf('camHeight')}</b></li>
-    <li><span>24 s · Cansancio · Cambios</span><b>${[S.shotClock, S.fatigue, S.autoSubs].map(v => (v ? 'Sí' : 'No')).join(' · ')}</b></li><li><span>Tu estilo</span><b>${style}</b></li></ul>`;
+    <li><span>24 s · Cansancio</span><b>${[S.shotClock, S.fatigue].map(v => (v ? 'Sí' : 'No')).join(' · ')}</b></li><li><span>Tu estilo</span><b>${style}</b></li></ul>`;
 }
 
 /* ---------------------------------------------------------------------------

@@ -1,6 +1,24 @@
-# Basket 3D — v68
+# Basket 3D — v72
 
 Basket en tercera persona con Three.js: cancha NBA a escala real, física realista, menú con los 30 equipos (con escudos), marcador estilo NBA TV, tribuna estilo Chase Center (Warriors), árbitro y un rival (bot) quieto.
+
+## Novedades v72
+- **Cambios:** se sacó el cambio automático en tu equipo: los hacés vos desde la pausa cuando alguien está cansado. Los bots (y las salas online, que no tienen menú de cambios) siguen con cambio automático.
+- **Reloj estilo NBA:** décimas por debajo del minuto (45.3 · 9.8 · 0.4) y décimas en los últimos 5 s del reloj de 24 (que se apaga si al cuarto le queda menos). El reloj corre con el tiro en el aire; solo se frena con la pelota muerta (canasta, falta, afuera, tiros libres).
+- **Chicharra:** si el tiro ya salió de la mano antes de 0.0 y entra, vale y termina el cuarto; si pega en el aro o no entra, termina. Un tiro que todavía no salió de la mano no vale.
+- **Mercado:** al tocar una carta o su precio se abre la confirmación de compra (precio, tus monedas, cuánto te queda) y recién ahí comprás.
+- **Compradores bots:** en el mercado online, de a ratos un bot le compra a algunas de tus publicaciones (~60 %, más rápido cuanto más barata). Hay que correr `supabase/011_mercado_bots.sql`.
+
+## Novedades v71
+- **Online (invitado):** arreglado el tiro trabado (si la barra local no llegaba a aparecer, nunca se mandaba el "soltar" y el anfitrión quedaba cargando; ahora siempre se manda y hay corte automático a los 3,5 s). Menos delay: el jugador del invitado se mueve al instante con **predicción** y se corrige con lo del anfitrión; con conexión directa (P2P) los snapshots suben a 30 por segundo y la demora de dibujo baja a 80 ms.
+- **Dificultades:** ya no aparece "undefined" (Ultimate Team y carrera usan los 5 niveles: Rookie · Semi-Rookie · Profesional · Semi-Star · All-Star). **All-Star Live** ahora es **Semi-Star**. All-Star queda para **Champion Star**.
+- **Champion Star (nuevo, Ultimate Team):** ranking mensual online, dificultad All-Star. +20 por victoria (+2 por racha hasta +10, +5 si ganás por 15 o más), −8 por derrota, −15 por abandonar. El top 3 reclama premios grandes al terminar el mes. **Hay que correr `supabase/010_champion_star.sql`** en Supabase. Premios: ultimate/ut-state.js → `CHAMPION.top`.
+- **Saque de banda:** cada compañero muestra un botón arriba (teclado 1·2·3·4, joystick ✕○□△ / ABXY); el que saca no se puede mover. Online funciona igual para el invitado.
+- **Amague de tiro:** mientras cargás, Dribleo / Robo / Pase cancelan el tiro (o un toque rápido del botón de tiro); los defensores pueden picar.
+- **Sonidos:** sin ambiente (público, bocina); solo el silbato del árbitro. Se sacó el volumen del público de Configuración.
+- **Cansancio:** se gasta más rápido y en la cancha casi no se recupera; el banco recupera de a poco.
+- **Cuentas:** ajustes, controles, armado de partido, entrenamiento, sala online y carreras DT se guardan por cuenta (`acct.js`). Al cambiar de cuenta la página se recarga sola. La primera cuenta que entra hereda lo que ya había; el invitado sigue igual.
+- **Sobre Especial (200.000):** 2 % de que salga un ícono.
 
 ## Ejecutarlo
 1. Descomprimí el ZIP y abrí la carpeta en VS Code.
@@ -600,3 +618,12 @@ Las 524 cartas viajan en **`ultimate/cards.zip`** (un solo archivo, sin comprimi
 - **Ultimate Team · walkouts**: cuando sale un caminante (media 86+) el fondo es la **cancha 3D real del equipo del jugador** (antes era la armada por código). Las canchas de los walkouts se empiezan a bajar mientras se abre el sobre y se liberan al terminar cada uno.
 - **Pelota 3D** (`assets/ball.glb`, la misma `nba_basketball.glb` de canchas_3d.zip ya calibrada) en los walkouts, en lugar de la esfera dibujada.
 - **Ícono (nueva secuencia)**: si sale un ícono va **primero** en el sobre y las demás cartas siguen de menor a mayor. Se abre el sobre → la pelota aparece en grande, se achica y pica 5 veces en el piso mientras salen las estadísticas (TIR · PAS · REG · DEF · REB · VEL) con luces blancas y de colores → entra el jugador (con su aspecto y la camiseta de su equipo) y clava un mate de dos manos en cámara lenta → ahí sale la carta del ícono. Está en `ultimate/packs3d.js` (`iconWalkout`, `dunkSeq`).
+
+
+## Novedades v69 — carga directa, saques con pase obligatorio, 5 dificultades y estadísticas más fieles
+- **Carga:** se fue la cinemática y el "presioná una tecla". La pantalla de carga espera también al menú/login y recién ahí se desvanece, así ya no se ve la cancha con los jugadores en el medio (la cancha 3D no se dibuja hasta que empieza un partido o entrenamiento). Se borró `intro.js`.
+- **Saques (faltas, fondo, banda, inicio de cuarto):** el que saca **no puede entrar con la pelota**: solo se desliza ±2,5 m por la línea y tiene que pasar (flecha verde / dirección del stick, botón de pase) en **5 segundos** (si no, violación). Tus compañeros se abren a distintas distancias. Los rivales **no pueden robar** y se quedan a **2,2 m** como mínimo hasta que sale el pase (`INB_GAP` en `main.js`). Vale igual cuando saca el bot: no se la regalás ni se la ganás de entrada.
+- **5 dificultades:** Rookie · Semi-Rookie · Profesional · Semi-Star · All-Star (`ai.js`). Los ajustes viejos (fácil/difícil/extremo) se convierten solos. La velocidad extra del rival por dificultad bajó (0,90 → 1,04): la velocidad real viene de los atributos.
+- **Ultimate Team:** Rookie Battles (etapas 1-4 Rookie, 5-8 Semi-Rookie, 9-10 Profesional) · **Dream Live sube con la división** (10-9 Rookie, 8-7 Semi-Rookie, 6-5 Profesional, 4-3 Semi-Star, 2-1 All-Star) · **All-Star Live siempre en All-Star** (clasificatoria y fase final) · Squad Battles: Fácil=Rookie, Normal=Profesional, Difícil=Semi-Star, Extremo=All-Star.
+- **Estadísticas más fieles (`skill.js`):** velocidad 99 → ×1,14, 83 → ×1,05, 70 → ×0,97, 40 → ×0,72. Aceleración y giro salen de la velocidad; **con la pelota** también del manejo (`handleMul`: 99 → ×1,30, 60 → ×0,82) y la velocidad dribleando de `speedBall`. Tanto para bots como para vos con joystick.
+**Ojo:** no pude abrirlo en un navegador; verifiqué la sintaxis de todos los módulos y las curvas con scripts. Si algo del saque se siente raro, decime qué y lo ajusto.

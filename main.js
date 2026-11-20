@@ -13,7 +13,7 @@ import { fallbackRoster, loadRoster, SKIN_TONES } from './roster.js';
 import { buildFor, scaleFor } from './looks.js';
 import * as PM from './prematch.js';
 import * as Online from './online.js';
-import { SnapBuffer, STATES, MODES, SNAP_HZ, r2, r3, lerpAngle } from './netsync.js';
+import { SnapBuffer, STATES, MODES, SNAP_HZ, SNAP_HZ_P2P, r2, r3, lerpAngle } from './netsync.js';
 import { nickname, lum, kitById } from './kits.js';
 import * as Pad from './gamepad.js';
 import * as KB from './keyboard.js';
@@ -23,8 +23,8 @@ import * as UT from './ultimate/ut.js';
 import * as Box from './boxscore.js';
 import * as Crowd from './crowd.js';
 import { solveBank, solveRoll, solveBounce } from './shotsim.js';
-import { speedMul, accelMul, drainMul, recoverMul, jumpMul, canDunk, releaseSkill, reboundScore, zoneRating } from './skill.js';
-import { PROFILES, aiPrepare, aiThink, newAIState, shotQuality, bestPass, styledProfile } from './ai.js';
+import { speedMul, accelMul, drainMul, recoverMul, jumpMul, canDunk, releaseSkill, reboundScore, zoneRating, handleMul, ballSpeedMul } from './skill.js';
+import { PROFILES, normDiff, aiPrepare, aiThink, newAIState, shotQuality, bestPass, styledProfile } from './ai.js';
 
 /* ============ Partido online: quién soy ============ */
 let netRole = null;                    // null (partido normal) · 'host' (simula todo y manda snapshots) · 'guest' (manda sus controles y dibuja lo que recibe)
@@ -44,6 +44,9 @@ const G9 = 9.81, BR = 0.12, KD = 0.0206, CM = 0.004;
 const RIM_Y = 3.05, RIM_IN = 0.2286, RIM_TUBE = 0.0095, RIM_C = RIM_IN + RIM_TUBE;
 const COURT_X = 7.62, COURT_Z = 14.325, HOOP_Z = 12.75;
 const PERFECT = 0.70, CHARGE_SPEED = 0.78;
+/* v71 · Cansancio: se gasta más rápido y en la cancha casi no se recupera (parado o con la pelota muerta apenas sube): para descansar de verdad hay que salir.
+   Los suplentes en el banco se recuperan de a poco (BENCH_REC por segundo). Antes: correr 0,09 · trotar 0,02 · parado +0,04 · pelota muerta +0,10 · banco +0,055. */
+const STAM = { sprint: 0.115, jog: 0.03, rest: 0.010, dead: 0.018 }, BENCH_REC = 0.028;
 const T_LAUNCH = 0.14, T_REL = 0.45, T_END = 1.05, JUMP_SHOT = 3.2, TW = 0.10;
 const SKIN = 0xb97a50;
 const CAM_NAMES = ['Cámara 2K', 'Cámara de TV', 'Cámara libre'];
@@ -338,7 +341,7 @@ function refreshModel(a) {
 function setInfo(a, info) {
   a.info = info; a.R.setSkin(SKIN_TONES[info.skin] ?? SKIN); a.R.setLook(info.name || info.id, info.look); a.R.setBuild(buildFor(info)); a.R.setUniformInfo?.(info);
   a.scale = scaleFor(info); a.R.root.scale.setScalar(a.scale);
-  a.spdMul = speedMul(info); a.accMul = accelMul(info); a.drainM = drainMul(info); a.recM = recoverMul(info); a.jumpM = jumpMul(info);   // físico según los atributos (skill.js)
+  a.spdMul = speedMul(info); a.accMul = accelMul(info); a.hndMul = handleMul(info); a.bspMul = ballSpeedMul(info); a.drainM = drainMul(info); a.recM = recoverMul(info); a.jumpM = jumpMul(info);   // físico según los atributos (skill.js)
   drawLabel(a); refreshModel(a);
 }
 function applyRosters(rA, rB) {
@@ -389,7 +392,7 @@ const trackPts = (pts, who, ft) => {
 let paused = true, scoreA = 0, scoreB = 0, quarter = 1, qLen = 180, clockT = 180, shotClock = 24, gameTime = 0;
 let teamA = TEAMS[13], teamB = TEAMS[1];
 let mode = 'match';                                   // 'match' (partido casual) | 'training'
-let diff = UI.settings.diff || 'hard';
+let diff = normDiff(UI.settings.diff);
 let camHeight = 0;
 const teamFouls = [0, 0];
 let kitA = null, kitB = null;                         // camisetas elegidas en el menú previo (kits.js)
@@ -398,10 +401,13 @@ let styleKey = '', styleKeyB = '';
 const profCache = new Map();
 const stats = { shots: 0, makes: 0, streak: 0, best: 0, xp: 0 };
 let pendingShot = false, shotCounter = 0;
+let inbSpot = null, inbT = 0, inbWarn = false;   // v69: lugar del saque (x, z, ix, iz) y segundos que lleva el que saca con la pelota
+let menuReady = false;   // v69: hasta que el menú esté en pantalla no se dibuja la cancha 3D
 let dead = null, inbound = false, ballOut = false, audioCtx = null;   // dead = pelota muerta (punto, afuera, violación) con secuencia del árbitro
 const tvc = { x: 0, z: 0 };
 const outsideLines = (x, z, m = 0) => Math.abs(x) > COURT_X + m || Math.abs(z) > COURT_Z + m;
 const fadeEl = $('fade'), setFade = v => { fadeV = v; fadeEl.style.opacity = v; };
+const INB_GAP = 2.2;                                    // v69: distancia mínima del defensor al que saca
 const say = t => { $('message').textContent = t; if (netRole === 'host') Online.sendGame({ t: 'E', k: 'say', v: t }, true); };
 const updatePowerUI = () => { const c = humans[0]?.agent || ctrl; $('powerFill').style.width = `${c.charge * 100}%`; $('powerPercent').textContent = `${Math.round(c.charge * 100)}%`; };
 const activeAgents = () => agents.filter(a => a.active);
@@ -469,7 +475,8 @@ function scoreFor(H, pts) {
   cheerAt(team === 0 ? 3.2 : 1.6, team === 0); for (const h of humansOn(team)) rumbleH(h, 160, 0.5);
   const fp = B.foulPending;
   if (fp && fp.shooter.team === team) { resolvePending(true); return; }       // canasta + falta = y uno
-  say(`${ab}: ${pts === 3 ? '¡TRIPLE!' : '¡DOBLE!'}`);
+  say(`${ab}: ${pts === 3 ? '¡TRIPLE!' : '¡DOBLE!'}${clockT <= 0 ? ' ¡SOBRE LA CHICHARRA!' : ''}`);
+  if (clockT <= 0 && mode === 'match') { endPeriod(); return; }          // v72: entró con el tiro soltado a tiempo: vale y se termina el cuarto
   const dk = B.holder;
   if (dk && dk.state === 'dunk' && Math.random() < 0.05) {                    // se cuelga del aro: técnica, y después saque de fondo del rival
     commitFoul({ type: 'technical', fouler: dk, why: 'Se colgó del aro.', inTeam: 1 - team, spot: restartSpot('score', H.s, 0), x: H.s * COURT_Z, z: 0 }); return;
@@ -587,7 +594,7 @@ function applyTeams() {
   $('lgA').src = teamA.logo; $('lgB').src = teamB.logo;
 }
 function loadSetup(S) {                               // copia al juego lo que se eligió en el menú previo
-  teamA = S.teamA; teamB = S.teamB; kitA = S.kitA; kitB = S.kitB; qLen = S.qLen; diff = S.diff;
+  teamA = S.teamA; teamB = S.teamB; kitA = S.kitA; kitB = S.kitB; qLen = S.qLen; diff = normDiff(S.diff);
   Object.assign(opts, { shotClock: S.shotClock, fatigue: S.fatigue, autoSubs: S.autoSubs, style: S.style });
   camHeight = S.camHeight || 0;
   styleKey = JSON.stringify(S.style);
@@ -641,29 +648,43 @@ Box.setContext(() => ({
 }));
 const cache = {};
 const setText = (id, v) => { if (cache[id] !== v) { cache[id] = v; $(id).textContent = v; } };
-const fmt = s => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+/* v72 · Reloj como en la NBA: con 1 minuto o más se ve m:ss; por debajo del minuto se ven las DÉCIMAS (45.3 · 9.8 · 0.4). El de 24 s muestra décimas en los últimos 5 s y se apaga si el reloj del cuarto es menor. */
+const fmt = s => { s = Math.max(0, s); if (s < 60) return (Math.floor(s * 10 + 1e-6) / 10).toFixed(1); s = Math.ceil(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const fmtShot = s => (s < 5 ? (Math.floor(Math.max(0, s) * 10 + 1e-6) / 10).toFixed(1) : String(Math.ceil(s)));
+const shotClockLive = () => opts.shotClock && clockT > shotClock;           // NBA: si al cuarto le queda menos que al reloj de 24, ese reloj se apaga
 function updateScoreboard() {
   setText('scA', scoreA); setText('scB', scoreB); setText('sbQ', QN[quarter - 1]);
-  setText('sbT', fmt(clockT)); setText('sbShot', opts.shotClock ? Math.max(0, Math.ceil(shotClock)) : '--');
+  setText('sbT', fmt(clockT)); setText('sbShot', shotClockLive() ? fmtShot(shotClock) : '--');
   setText('sbInfo', scoreA === scoreB ? 'EMPATE' : `${scoreA > scoreB ? teamA.ab : teamB.ab} LIDERA POR ${Math.abs(scoreA - scoreB)}`);
-  $('sbShot').classList.toggle('low', opts.shotClock && shotClock < 5);
+  $('sbShot').classList.toggle('low', shotClockLive() && shotClock < 5);
   arena.drawBoard({ a: teamA, b: teamB, sa: String(scoreA), sb: String(scoreB), q: QN[quarter - 1], clk: fmt(clockT), info: cache.sbInfo });
 }
+/** Fin del cuarto (o del partido). Se llama recién cuando ya no hay un tiro en el aire que pueda valer. */
+let buzzT = 0;
+function endPeriod() {
+  buzzT = 0; clockT = 0; Crowd.horn();
+  if (quarter >= 4 && scoreA !== scoreB) { updateScoreboard(); finishGame(); return; }
+  quarter++; teamFouls[0] = teamFouls[1] = 0; clockT = quarter > 4 ? 90 : qLen;
+  const inT = quarter === 2 ? 1 : quarter === 3 ? 1 : quarter === 4 ? 0 : 0;
+  say(quarter > 4 ? '¡Empate! Tiempo suplementario' : `Comienza el cuarto ${quarter}`);
+  startDead('quarter', 0, 0, null, inT, { flip: quarter === 3 });
+}
+/* v72 · RELOJ EXACTO (como la NBA): el reloj de juego corre siempre que la pelota esté viva, también con un tiro en el aire; solo se frena con la pelota muerta (canasta, falta, afuera, tiros libres…).
+   Si llega a 0.0 con un tiro que ya salió de la mano, el cuarto espera: si la pelota entra vale el punto (scoreFor termina el cuarto en ese momento) y si pega en el aro o no entra, el cuarto termina.
+   Un tiro que todavía no salió de la mano cuando el reloj llega a 0.0 no vale. */
 function tickGame(dt) {
   pollFoul(dt);
   if (dead) return;
-  clockT -= dt;
-  if (netRole !== 'guest') for (const t of [0, 1]) for (const a of T[t].court) if (a.active) bx(a, 'sec', dt);
+  const left = clockT;
+  clockT = Math.max(0, clockT - dt);
+  if (netRole !== 'guest') for (const t of [0, 1]) for (const a of T[t].court) if (a.active) bx(a, 'sec', Math.min(dt, left));
   if (!opts.shotClock) shotClock = 24;                              // reloj de 24 s apagado: nunca vence
-  if (B.holder || B.mode === 'pass') shotClock -= dt;                // el reloj de 24 s se frena con la pelota en el aire / en rebote
-  if (shotClock <= 0 && B.holder) { bx(B.holder, 'tov'); say('Violación de 24 segundos'); if (B.holder.team === userTeam) Crowd.boo(0.6); startDead('violation', B.holder.pos.x, B.holder.pos.z, null, 1 - B.holder.team); return; }
+  if (B.holder || B.mode === 'pass') shotClock -= dt;                // con la pelota en las manos / pase corre el reloj de 24 s
+  else if (B.mode === 'shot') shotClock = Math.max(0, shotClock - dt);   // v72: con el tiro en el aire sigue corriendo (se reinicia si pega en el aro); en rebote suelto se frena
+  if (shotClock <= 0 && B.holder && shotClockLive() ) { bx(B.holder, 'tov'); say('Violación de 24 segundos'); if (B.holder.team === userTeam) Crowd.boo(0.6); startDead('violation', B.holder.pos.x, B.holder.pos.z, null, 1 - B.holder.team); return; }
   if (clockT <= 0) {
-    Crowd.horn();
-    if (quarter >= 4 && scoreA !== scoreB) { clockT = 0; updateScoreboard(); finishGame(); return; }
-    quarter++; teamFouls[0] = teamFouls[1] = 0; clockT = quarter > 4 ? 90 : qLen;
-    const inT = quarter === 2 ? 1 : quarter === 3 ? 1 : quarter === 4 ? 0 : 0;
-    say(quarter > 4 ? '¡Empate! Tiempo suplementario' : `Comienza el cuarto ${quarter}`);
-    startDead('quarter', 0, 0, null, inT, { flip: quarter === 3 });
+    if (B.mode === 'shot' && B.shooter && (buzzT += dt) < 6) return;     // tiro en el aire al sonar la chicharra: se espera a ver si entra (tope de 6 s por seguridad)
+    endPeriod();
   }
 }
 function finishGame() {
@@ -707,17 +728,20 @@ function pressAction(act, h = kbHuman()) {                       // teclado y mo
   if (act === 'reset') { if (mode === 'training') resetTraining(); return; }
   if (act === 'camera') { cycleCamera(); return; }
   const c = h?.agent; if (!c) return;
+  if (c.state === 'charge' && (act === 'dribble' || act === 'steal' || act === 'pass') && fakeShot(c)) return;       // v71: amague
   if (act === 'shoot') { startCharge(c); return; }
   if (act === 'pass') humanPass(h);
   else if (act === 'steal') { if (!startSteal(c) && c.state === 'dribble') startCrossover(c); }
   else if (act === 'switch') switchPlayer(h);
   else if (act === 'dribble') humanCrossover(h);
 }
-function releaseAction(act, h = kbHuman()) { if (act === 'stats') { Box.setHeld('kb', false); return; } if (netRole === 'guest') { guestRelease(act, h); return; } const c = h?.agent; if (act === 'shoot' && c?.state === 'charge') releaseCharge(c); }
+function releaseAction(act, h = kbHuman()) { if (act === 'stats') { Box.setHeld('kb', false); return; } if (netRole === 'guest') { guestRelease(act, h); return; } const c = h?.agent; if (act === 'shoot' && c?.state === 'charge') releaseOrFake(c); }
 document.addEventListener('keydown', e => {
   if (KB.captureKey(e)) return;                       // ← en Controles esperando una tecla nueva
   if (typing(e)) return;                              // ← escribiendo en un campo (email, contraseña…): el juego no toca ninguna tecla
   if (paused || (netRole && menuLock())) return;
+  const dg = /^(?:Digit|Numpad)([1-4])$/.exec(e.code);
+  if (dg && !e.repeat) { const ih = inbCtl(); if (ih && (ih.dev === 'kb' || humans.length === 1) && inbPress(ih, +dg[1] - 1)) { e.preventDefault(); return; } }       // v71: saque → 1·2·3·4 le pasan a ese compañero
   const acts = KB.actionsOf(e.code);
   if (!acts.length) return;
   e.preventDefault();
@@ -795,7 +819,7 @@ function humanDir(h = humans[0]) {
 }
 function bestHumanPass(a, h = a?.hum || humans[0]) {   // el compañero que mejor coincide con la dirección en que te movés (o hacia el aro)
   if (!a || B.holder !== a || a.state !== 'dribble') return null;
-  const w = humanDir(h) || V3(0, 0, attSign[a.team]), mates = T[a.team].court.filter(t => t !== a && t.active);
+  const w = humanDir(h) || (inbound && inbSpot ? V3(inbSpot.ix, 0, inbSpot.iz) : V3(0, 0, attSign[a.team])), mates = T[a.team].court.filter(t => t !== a && t.active);
   const opps = T[1 - a.team].court;
   let best = null, bs = -9, near = null, nd = 99;
   for (const t of mates) {
@@ -811,7 +835,7 @@ function bestHumanPass(a, h = a?.hum || humans[0]) {   // el compañero que mejo
 }
 const modHeld = h => { const inp = inputOf(h); return !!(inp.kb && KB.down('mod')) || !!inp.P?.down?.mod; };      // ¿está apretado el botón de lujo (L2 / Z)?
 function humanPass(h = humans[0], flash) { if (autoUser || dead || mode !== 'match' || !h) return; const t = bestHumanPass(h.agent, h); if (t) doPass(h.agent, t, (flash ?? modHeld(h)) ? 'flash' : undefined); }
-function humanCrossover(h = humans[0], flash) { if (!autoUser && !dead && h) startCrossover(h.agent, (flash ?? modHeld(h)) ? 'flash' : undefined); }
+function humanCrossover(h = humans[0], flash) { if (!autoUser && !dead && !inbound && h) startCrossover(h.agent, (flash ?? modHeld(h)) ? 'flash' : undefined); }
 function switchPlayer(h = humans[0]) {
   const c = h?.agent;
   if (!c || mode !== 'match' || dead || c.state === 'charge' || c.state === 'shoot' || c.state === 'dunk') return;
@@ -847,7 +871,7 @@ function steerStick(a, P, dt) {
   const target = Math.atan2(w.x, w.z), sp = Math.hypot(a.vel.x, a.vel.z); a.stickMag = s.mag;
   if (a.steer === undefined || sp < 1.2 || !a.grounded) a.steer = target;
   else {
-    const rate = lerp(Pad.STICK.turnStand, Pad.STICK.turnRun, clamp(sp / 7, 0, 1)) * clamp(a.accMul ?? 1, 0.8, 1.25) ;
+    const rate = lerp(Pad.STICK.turnStand, Pad.STICK.turnRun, clamp(sp / 7, 0, 1)) * clamp((a.accMul ?? 1) * (B.holder === a ? (a.hndMul ?? 1) : 1), 0.6, 1.6);
     a.steer += clamp(wrap(target - a.steer), -rate * dt, rate * dt);
   }
   return V3(Math.sin(a.steer), 0, Math.cos(a.steer));
@@ -876,7 +900,29 @@ const _tv = V3(), _dv = V3(), _hp = V3();
 function startCharge(a) {
   if (a.state !== 'dribble' || B.holder !== a || !a.grounded || (dead && !(dead.ftStage === 'aim' && dead.ftShooter === a)) || inbound || a.act) return false;
   a.aimHoop = mode === 'training' ? facingHoop(a) : attackHoop(a.team);
-  a.state = 'charge'; a.charge = 0; a.chargeDir = 1; a.chargeMul = chargeTarget(a); a.side = 1; a.shotId = ++shotCounter; return true;
+  a.state = 'charge'; a.charge = 0; a.chargeDir = 1; a.chargeMul = chargeTarget(a); a.side = 1; a.shotId = ++shotCounter; a.chargeT0 = performance.now(); return true;
+}
+/* v71 · AMAGUE (como en FC): mientras cargás el tiro, apretar Dribleo / Robo / Pase cancela el tiro y seguís con la pelota; un toque rápido del botón de tiro también es amague.
+   Los defensores que te marcan de frente pueden picar el amague y quedar mal parados. quiet = cancelar sin efecto en los defensores (corte por red). */
+const TAP_FAKE_MS = 160;
+function fakeShot(a, quiet) {
+  if (a.state !== 'charge' || a.ftShot || (dead && dead.ftStage)) return false;
+  a.state = 'dribble'; a.charge = 0; a.chargeDir = 1; a.moveCd = Math.max(a.moveCd, 0.2); a.act = null;
+  if (quiet) return true;
+  for (const d of T[1 - a.team].court) {
+    if (!d.active || !d.grounded || d.stunT > 0 || d.act) continue;
+    const dx = d.pos.x - a.pos.x, dz = d.pos.z - a.pos.z, dd = Math.hypot(dx, dz);
+    if (dd < 2.2 && dd > 0.1 && (dx * Math.sin(a.h) + dz * Math.cos(a.h)) / dd > 0.2) {
+      const pr = clamp(0.30 + ((a.info?.handle ?? 70) - (d.info?.perD ?? 70)) / 120 - (oppTeam(d.team) ? (prof(d).tight - 0.5) * 0.15 : 0), 0.06, 0.6);
+      if (Math.random() < pr) { d.stunT = 0.55; if (isHum(a) && !isHum(d)) say('¡Se lo llevó con el amague!'); }
+    }
+  }
+  return true;
+}
+function releaseOrFake(a) {                       // soltar el botón de tiro: tiro normal, o amague si fue un toque rápido
+  if (a.state !== 'charge') return;
+  if (!a.ftShot && !dead && performance.now() - (a.chargeT0 || 0) < TAP_FAKE_MS && fakeShot(a)) return;
+  releaseCharge(a);
 }
 function releaseCharge(a) {
   if (a.state !== 'charge') return;
@@ -1102,6 +1148,7 @@ function startCrossover(a, style) {
 
 /* ---- robo y tapón ---- */
 function startSteal(a) {
+  if (inbound) return false;                            // v69: no se roba en el saque
   if (a.state !== 'free' || !a.grounded || a.act || a.stunT > 0 || dead || mode !== 'match') return false;
   a.act = 'steal'; a.actT = 0.5; a.stealDone = false;
   a.reachCount = gameTime < a.reachT ? a.reachCount + 1 : 1; a.reachT = gameTime + 2.5;
@@ -1109,6 +1156,7 @@ function startSteal(a) {
 }
 function resolveSteal(a) {
   a.stealDone = true;
+  if (inbound) { a.stunT = 0.2; return; }
   const h = B.holder; if (!h || h.team === a.team) { a.stunT = 0.3; return; }
   const dx = h.pos.x - a.pos.x, dz = h.pos.z - a.pos.z, d = Math.hypot(dx, dz) || 1;
   const fwd = (dx * Math.sin(a.h) + dz * Math.cos(a.h)) / d;
@@ -1178,7 +1226,7 @@ function updateAgent(a, dt, I) {
   let maxSp = I.sprint && !a.tired ? sprintSp : 4.4;
   if (human && !I.sprint && I.sprintAmt > 0 && !a.tired) maxSp = lerp(4.4, sprintSp, I.sprintAmt * 0.8);       // gatillo a medias = trote
   if (a.tired) maxSp = holds ? 3.2 : 3.8;
-  maxSp *= a.spdMul * fatigue(a) * (oppTeam(a.team) ? prof(a).spd : 1) * (a.dribMode ? 1.05 : 1) * (holds ? 0.95 + clamp((a.info.speedBall - 60) * 0.0025, -0.05, 0.08) : 1) * (a.stunT > 0 ? 0.4 : 1);
+  maxSp *= a.spdMul * fatigue(a) * (oppTeam(a.team) ? prof(a).spd : 1) * (a.dribMode ? 1.05 : 1) * (holds ? (a.bspMul ?? 1) : 1) * (a.stunT > 0 ? 0.4 : 1);
   if (!human) maxSp *= clamp(I.mag, 0.25, 1); else if (I.analog < 1) maxSp *= clamp(I.analog, 0.3, 1);
   if (a.state === 'charge') maxSp = 1.6; if (a.state === 'shoot') maxSp = 0;
   if (a.act === 'steal') maxSp = Math.min(maxSp, 2.4);
@@ -1186,7 +1234,7 @@ function updateAgent(a, dt, I) {
   const prev = a.vel.clone();
   if (hasWish && maxSp > 0) {
     _dv.copy(wish).multiplyScalar(maxSp).sub(a.vel);
-    const rate = (a.vel.dot(wish) < -0.5 ? 26 : 14) * (a.accMul ?? 1) * (a.grounded ? 1 : 0.12) * (a.dribMode || a.crossT > 0 ? 1.4 : 1) * (a.stunT > 0 ? 0.5 : 1);
+    const rate = (a.vel.dot(wish) < -0.5 ? 26 : 14) * (a.accMul ?? 1) * (holds ? (a.hndMul ?? 1) : 1) * (a.grounded ? 1 : 0.12) * (a.dribMode || a.crossT > 0 ? 1.4 : 1) * (a.stunT > 0 ? 0.5 : 1);
     a.vel.add(_dv.setLength(Math.min(_dv.length(), rate * dt)));
   } else if (a.grounded) {
     const sp = a.vel.length(), d = Math.min(sp, (a.state === 'shoot' ? 9 : 17) * dt);
@@ -1194,23 +1242,32 @@ function updateAgent(a, dt, I) {
   }
   a.acc.lerp(_tv.copy(a.vel).sub(prev).multiplyScalar(1 / dt), 1 - Math.exp(-10 * dt));
   a.pos.addScaledVector(a.vel, dt);
+  if (inbound && inbSpot && B.holder) {                  // v69 · SAQUE: el que saca no puede entrar con la pelota (solo se desliza por la línea) y los rivales se quedan a distancia
+    const ho = B.holder;
+    if (holds) {                                         // v71: el que saca se queda CLAVADO en su lugar (no se desliza, no gira, no salta): solo puede elegir a quién pasarle
+      a.pos.x = inbSpot.x; a.pos.z = inbSpot.z; a.vel.set(0, 0, 0); a.acc.set(0, 0, 0);
+    } else if (a.team !== ho.team) {
+      let dx = a.pos.x - ho.pos.x, dz = a.pos.z - ho.pos.z, dd = Math.hypot(dx, dz);
+      if (dd < INB_GAP) { if (dd < 0.01) { dx = inbSpot.ix; dz = inbSpot.iz; dd = 1; } a.pos.x = ho.pos.x + dx / dd * INB_GAP; a.pos.z = ho.pos.z + dz / dd * INB_GAP; }
+    }
+  }
   if (human) { a.pos.x = clamp(a.pos.x, -COURT_X - 1.5, COURT_X + 1.5); a.pos.z = clamp(a.pos.z, -COURT_Z - 0.675, COURT_Z + 0.675); }   // el humano puede pisar afuera (y entonces es 'fuera de límites')
   else { const mx = holds ? 0.7 : 0.35; a.pos.x = clamp(a.pos.x, -COURT_X + mx, COURT_X - mx); a.pos.z = clamp(a.pos.z, -COURT_Z + mx, COURT_Z - mx); }
 
   // cansancio
   const sp = Math.hypot(a.vel.x, a.vel.z), sm = prof(a).stamina * (a.drainM ?? 1), rm = a.recM ?? 1;   // resistencia: el que tiene más se cansa más lento y recupera más rápido
   if (!dead) {
-    if (sp > 5.2 && I.sprint) a.stam -= 0.09 * dt * sm; else if (sp > 2.0) a.stam -= 0.02 * dt * sm; else if (sp < 1) a.stam += 0.04 * dt * rm;
-  } else a.stam += 0.10 * dt * rm;
+    if (sp > 5.2 && I.sprint) a.stam -= STAM.sprint * dt * sm; else if (sp > 2.0) a.stam -= STAM.jog * dt * sm; else if (sp < 1) a.stam += STAM.rest * dt * rm;
+  } else a.stam += STAM.dead * dt * rm;
   a.stam = clamp(a.stam, 0, 1);
   if (!opts.fatigue) { a.stam = 1; a.tired = false; }                // cansancio apagado
-  if (!a.tired && a.stam < 0.08) { a.tired = true; if (isHum(a) && a.hum.dev !== 'net') say('¡Estás cansado! Frená un momento para recuperar energía.'); }
+  if (!a.tired && a.stam < 0.08) { a.tired = true; if (isHum(a) && a.hum.dev !== 'net') say(netRole ? '¡Estás cansado! Frená un momento para recuperar energía.' : '¡Estás cansado! Pausá el partido y hacé un cambio (o frená un momento).'); }
   else if (a.tired && a.stam > 0.3) a.tired = false;
 
   let want = null, rate = 0;
   if (a.state === 'charge' || a.state === 'shoot') { want = Math.atan2(-a.pos.x, a.aimHoop.hz - a.pos.z); rate = 16; }
   else if (I.face != null && a.grounded) { want = I.face; rate = 10; }
-  else if (sp > 0.6) { want = Math.atan2(a.vel.x, a.vel.z); rate = Math.max(6, 15 - 1.2 * sp); }
+  else if (sp > 0.6) { want = Math.atan2(a.vel.x, a.vel.z); rate = Math.max(6, 15 - 1.2 * sp) * clamp((a.accMul ?? 1) * (holds ? (a.hndMul ?? 1) : 1), 0.6, 1.6); }     // v69: gira más rápido el que corre / maneja mejor
   else if (!human && B.holder && B.holder !== a && !dead) { want = Math.atan2(BP.x - a.pos.x, BP.z - a.pos.z); rate = 6; }
   if (a.moveT > 0 && a.moveKind === 'spin' && a.state === 'dribble') a.h = a.spinH0 + 2 * Math.PI * a.side * smooth(1 - a.moveT / a.moveDur);       // spin move: vuelta completa protegiendo la pelota
   else if (want !== null) a.h += clamp(wrap(want - a.h), -rate * dt, rate * dt);
@@ -1741,6 +1798,13 @@ function startDead(kind, a = 0, b = 0, msg, inTeam = 0, opts = {}) {
   if (msg) say(msg);
   if (kind !== 'score' && !opts.instant && !opts.quiet) whistle();
 }
+function checkInbound(dt) {                              // v69: 5 segundos para sacar
+  const h = B.holder;
+  if (!inbound || !h || !inbSpot) { inbT = 0; inbWarn = false; return; }
+  inbT += dt;
+  if (!inbWarn && inbT > 2.5 && isHum(h)) { inbWarn = true; say('¡Pasá la pelota! Tenés 5 segundos para sacar.'); }
+  if (inbT >= 5) { bx(h, 'tov'); say('¡Violación de 5 segundos en el saque!'); inbound = false; startDead('violation', h.pos.x, h.pos.z, null, 1 - h.team); }
+}
 function checkPlayerOut() {
   const h = B.holder; if (!h) return;
   if (inbound) { if (!outsideLines(h.pos.x, h.pos.z, -0.2)) inbound = false; return; }     // hasta que entra a la cancha no cuenta como "afuera"
@@ -1768,7 +1832,7 @@ function subSwap(ci, bi) {
 function doSubstitutions(force) {                       // en las pausas entran los suplentes por los jugadores cansados
   if (mode !== 'match') return;
   for (const t of [0, 1]) {
-    if (humansOn(t).length && !opts.autoSubs) continue;                // cambios automáticos apagados en tu equipo
+    if (humansOn(t).length && !netRole) continue;                      // v72: en tu equipo los cambios los hacés VOS desde la pausa (los bots y las salas online siguen con cambio automático: online no hay menú de cambios)
     const bench = T[t].bench;
     for (const a of T[t].court) {
       if (a.hum && a.stam > 0.15) continue;
@@ -2036,7 +2100,8 @@ function updateDead(dt) {
   if (d.t >= give + 0.6) {                              // 4) juego en marcha
     dead = null; B.mode = 'loose'; giveBall(inb, 'inbound'); inb.side = 1;
     inbound = outsideLines(inb.pos.x, inb.pos.z, -0.2); shotClock = 24; setFade(0);
-    if (!isHum(inb)) { inb.ai.inb = true; inb.ai.inbT = 0.6 + Math.random() * 0.7; }
+    inbSpot = inbound ? { x: d.spot.x, z: d.spot.z, ix: d.spot.ix, iz: d.spot.iz } : null; inbT = 0; inbWarn = false;
+    if (!isHum(inb)) { inb.ai.inb = true; inb.ai.inbT = 0.6 + Math.random() * 0.7; } else if (inbound && inb.hum.dev !== 'net') say('SAQUE: apretá el botón que tiene cada compañero arriba para pasarle.');
   }
 }
 let refPhase = 0, refSpeed = 0;
@@ -2160,7 +2225,7 @@ function buildSnap() {
   return {
     t: 'S', n: net.n, T: performance.now(), a: ag,
     b: [r3(BP.x), r3(BP.y), r3(BP.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w), idxOf(B.holder), Math.max(0, MODES.indexOf(B.mode))],
-    g: [scoreA, scoreB, quarter, r2(clockT), r2(shotClock), attSign[0], B.possTeam | 0, d ? 1 : 0, d?.ftShooter ? idxOf(d.ftShooter) : -1, d?.ftHoop ? d.ftHoop.s : 0, r2(fadeV)],
+    g: [scoreA, scoreB, quarter, r2(clockT), r2(shotClock), attSign[0], B.possTeam | 0, d ? 1 : 0, d?.ftShooter ? idxOf(d.ftShooter) : -1, d?.ftHoop ? d.ftHoop.s : 0, r2(fadeV), inbound ? 1 : 0],
     r: [r3(R3.root.position.x), r3(R3.root.position.z), r3(R3.root.rotation.y), ...JK.map(k => r3(J3[k]))],
     c: humans.map(h => idxOf(h.agent)),
     ...(net.n % 10 === 1 ? { x: Box.pack() } : {}),             // resumen de la tabla de puntos (2 veces por segundo)
@@ -2169,18 +2234,21 @@ function buildSnap() {
 function hostNetTick(dt) {
   const now = performance.now();
   for (const h of humans) if (h.dev === 'net' && h.net && now - h.net.t > 1500 && h.net.m) { h.net.m = 0; h.net.P.down = {}; h.net.P.amt.sprint = 0; }      // sin noticias del invitado: se queda quieto
-  net.acc += dt; if (net.acc < 1 / SNAP_HZ) return; net.acc = 0;
+  for (const h of humans) if (h.dev === 'net' && h.agent?.state === 'charge' && h.cT && now - h.cT > 3500) fakeShot(h.agent, true);        // v71: si nunca llegó el 'soltar' (red caída), el tiro se cancela solo en vez de quedar trabado
+  net.acc += dt; if (net.acc < 1 / (Online.linkState() === 'p2p' ? SNAP_HZ_P2P : SNAP_HZ)) return; net.acc = 0;       // v71: conexión directa = 30 snapshots por segundo (por Supabase se queda en 20)
   Online.sendGame(buildSnap(), false);
 }
 /** Controles y acciones que llegan del invitado (el anfitrión las valida y las simula con las mismas funciones que el teclado). */
 function netAct(h, m) {
   const c = h.agent; if (!c || mode !== 'match') return;
-  if (m.k === 'shoot') startCharge(c);
-  else if (m.k === 'release') { if (c.state === 'charge') { c.charge = clamp(+m.ch || 0, 0, 1); releaseCharge(c); } }       // el invitado manda su propia carga: así el tiro perfecto no depende de la demora de la red
+  if (m.k === 'shoot') { if (startCharge(c)) h.cT = performance.now(); }
+  else if (m.k === 'release') { if (c.state === 'charge') { if (m.ch >= 0) c.charge = clamp(+m.ch || 0, 0, 1); releaseCharge(c); } }       // ch = -1: el invitado no llegó a ver su barra, se usa la del anfitrión
+  else if (m.k === 'fake') { if (c.state === 'charge') fakeShot(c); }       // el invitado manda su propia carga: así el tiro perfecto no depende de la demora de la red
   else if (m.k === 'pass') humanPass(h, !!m.fl);
   else if (m.k === 'steal') { if (!startSteal(c) && c.state === 'dribble') startCrossover(c); }
   else if (m.k === 'switch') switchPlayer(h);
   else if (m.k === 'dribble') humanCrossover(h, !!m.fl);
+  else if (m.k === 'inbp') { if (inbound && B.holder === c) { const t = inbMates(c)[+m.n | 0]; if (t) doPass(c, t); } }
 }
 function onNetGame(m) {
   if (netRole === 'host') {
@@ -2215,6 +2283,7 @@ function ingestSnap(sn) {                                // lo que no se interpo
   });
 }
 function viewerStep(dt) {
+  net.delay = Online.linkState() === 'p2p' ? 80 : 125;                                 // v71: antes 110 fijo; directo alcanza con ~2,5 snapshots de margen
   const smp = net.buf.sample(net.buf.at(performance.now(), net.delay)); if (!smp) return;
   const { a: A, b: Bk } = smp, k = A === Bk ? 0 : smp.k;
   for (let i = 0; i < agents.length; i++) {
@@ -2233,7 +2302,7 @@ function viewerStep(dt) {
   net.lastScore = [g[0], g[1]];
   scoreA = g[0]; scoreB = g[1]; quarter = g[2]; clockT = g[3]; shotClock = g[4]; attSign = [g[5], -g[5]]; B.possTeam = g[6];
   dead = g[7] ? { phase: 0, ftShooter: g[8] >= 0 ? agents[g[8]] : null, ftHoop: g[9] ? { s: g[9] } : null } : null;
-  setFade(g[10]);
+  setFade(g[10]); netIb = !!g[11];
   const ra = A.r, rb = Bk.r;                                                           // árbitro
   R3.root.position.set(lerp(ra[0], rb[0], k), 0, lerp(ra[1], rb[1], k)); R3.root.rotation.y = lerpAngle(ra[2], rb[2], k);
   for (let j = 0; j < JK.length; j++) J3[JK[j]] = lerp(ra[3 + j], rb[3 + j], k);
@@ -2241,11 +2310,46 @@ function viewerStep(dt) {
   humans.forEach((h, i) => { const ai = Bk.c[i]; if (ai >= 0 && agents[ai] && agents[ai] !== h.agent) takeAgent(h, agents[ai]); });       // a quién controla cada uno (lo decide el anfitrión)
   ctrl = humans[1].agent;
   const me = ctrl;
+  predictMe(me, dt);
   if (net.lc) {                                                                       // barra de tiro propia: corre acá, sin esperar a la red (se manda la carga al soltar)
     const lc = net.lc; lc.v += lc.dir * CHARGE_SPEED * (lc.mul || 1) * dt; if (lc.v >= 1) { lc.v = 1; lc.dir = -1; } if (lc.v <= 0) { lc.v = 0; lc.dir = 1; }
-    if (me._ss === 'shoot' || me._ss === 'dunk' || (performance.now() - lc.t > 450 && me._ss !== 'charge')) net.lc = null;
+    if (me._ss === 'shoot' || me._ss === 'dunk' || (performance.now() - lc.t > 1800 && me._ss !== 'charge')) net.lc = null;
     else { me.state = 'charge'; me.charge = lc.v; }
   }
+}
+/* v71 · PREDICCIÓN: el jugador del invitado se mueve YA con sus controles (mismas reglas de velocidad que el anfitrión) y se va corrigiendo hacia lo que dice el anfitrión.
+   Antes se dibujaba solo lo que llegaba por red (ping + 110 ms atrasado): se sentía con delay. Solo se predice caminando/corriendo (no tirando, saltando ni en pelota muerta). */
+const NET_PRED = { on: false, x: 0, z: 0, vx: 0, vz: 0 };
+function predictMe(me, dt) {
+  const P = NET_PRED, L = net.buf.list, h = humans[1], idx = agents.indexOf(me), st = me._ss;
+  if (L.length < 2 || idx < 0 || !h || dead || netIb || !(st === 'free' || st === 'dribble') || me.y > 0.04 || paused) { P.on = false; return; }
+  const s1 = L[L.length - 1], s0 = L[L.length - 2], r1 = s1.a[idx], r0 = s0.a[idx]; if (!r1 || !r0) { P.on = false; return; }
+  const span = Math.max(0.016, (s1.T - s0.T) / 1000), avx = (r1[0] - r0[0]) / span, avz = (r1[2] - r0[2]) / span;
+  const ax = r1[0] + avx * 0.05, az = r1[2] + avz * 0.05;                              // dónde está AHORA según el anfitrión (con un poco de adelanto por la demora de la red)
+  const ix = me.pos.x, iz = me.pos.z;
+  if (!P.on) { P.on = true; P.x = ix; P.z = iz; P.vx = avx; P.vz = avz; }
+  const I = netInputOf(h), holds = B.holder === me;
+  const sprintSp = st === 'dribble' ? 6.6 : 7.0;
+  let maxSp = I.sp && !me.tired ? sprintSp : 4.4;
+  if (!I.sp && I.spA > 0 && !me.tired) maxSp = lerp(4.4, sprintSp, I.spA * 0.8);
+  if (me.tired) maxSp = holds ? 3.2 : 3.8;
+  maxSp *= (me.spdMul ?? 1) * fatigue(me) * (holds ? (me.bspMul ?? 1) : 1);
+  if (I.an < 1) maxSp *= clamp(I.an, 0.3, 1);
+  if (I.m && (I.wx || I.wz)) {
+    const l = Math.hypot(I.wx, I.wz) || 1, wx = I.wx / l, wz = I.wz / l, dvx = wx * maxSp - P.vx, dvz = wz * maxSp - P.vz, dl = Math.hypot(dvx, dvz);
+    const rate = ((P.vx * wx + P.vz * wz) < -0.5 ? 26 : 14) * (me.accMul ?? 1) * (holds ? (me.hndMul ?? 1) : 1);
+    if (dl > 1e-6) { const k = Math.min(dl, rate * dt) / dl; P.vx += dvx * k; P.vz += dvz * k; }
+  } else { const sp = Math.hypot(P.vx, P.vz), d = Math.min(sp, 17 * dt); if (sp > 1e-4) { P.vx *= (sp - d) / sp; P.vz *= (sp - d) / sp; } }
+  P.x += P.vx * dt; P.z += P.vz * dt;
+  const ex = ax - P.x, ez = az - P.z;
+  if (Math.hypot(ex, ez) > 1.6) { P.x = ax; P.z = az; P.vx = avx; P.vz = avz; }          // muy desfasado (choque, cambio de jugador…): se acepta lo del anfitrión
+  else { const c = 1 - Math.exp(-dt * 5); P.x += ex * c; P.z += ez * c; P.vx += (avx - P.vx) * (1 - Math.exp(-dt * 2.5)); P.vz += (avz - P.vz) * (1 - Math.exp(-dt * 2.5)); }
+  P.x = clamp(P.x, -COURT_X - 1.5, COURT_X + 1.5); P.z = clamp(P.z, -COURT_Z - 0.675, COURT_Z + 0.675);
+  const sp = Math.hypot(P.vx, P.vz);
+  if (sp > 0.6) { const want = Math.atan2(P.vx, P.vz); me.h += clamp(wrap(want - me.h), -Math.max(6, 15 - 1.2 * sp) * dt, Math.max(6, 15 - 1.2 * sp) * dt); }
+  me.pos.set(P.x, 0, P.z);
+  if (holds) { BP.x += P.x - ix; BP.z += P.z - iz; }                                    // la pelota viaja con la mano (viene del anfitrión, ~100 ms atrasada)
+  me.R.root.position.set(P.x, me.y, P.z); me.R.root.rotation.y = me.h; me.R.root.updateMatrixWorld(true);
 }
 function guestChargeMul(me) { try { return chargeTarget(me); } catch { return 1; } }       // el invitado calcula la velocidad de su propia barra con la misma regla
 function netInputOf(h) {
@@ -2270,7 +2374,8 @@ function guestSend(k, extra) { Online.sendGame({ t: 'A', k, ...extra }, true); }
 function guestAct(act, h) {                                                           // botones del invitado: se mandan al anfitrión
   const me = h?.agent; if (!me) return;
   if (act === 'camera') { cycleCamera(); return; }
-  if (act === 'shoot') { if (B.holder === me && me._ss === 'dribble' && !net.lc) net.lc = { v: 0, dir: 1, t: performance.now(), mul: guestChargeMul(me) }; guestSend('shoot'); }
+  if (net.lc && (act === 'pass' || act === 'steal' || act === 'dribble')) { net.lc = null; guestSend('fake'); return; }       // v71: amague
+  if (act === 'shoot') { if (B.holder === me && (me._ss === 'dribble' || me._ss === 'free') && !net.lc) net.lc = { v: 0, dir: 1, t: performance.now(), mul: guestChargeMul(me) }; guestSend('shoot'); }
   else if (act === 'pass') { if (B.holder === me) guestSend('pass', { fl: modHeld(h) ? 1 : 0 }); else if (h.dev === 'pad') guestSend('switch'); }
   else if (act === 'steal') guestSend('steal');
   else if (act === 'switch') guestSend('switch');
@@ -2278,10 +2383,13 @@ function guestAct(act, h) {                                                     
 }
 function guestRelease(act, h) {
   if (act !== 'shoot') return;
-  const me = h?.agent, ch = net.lc ? net.lc.v : (me?._ss === 'charge' ? me.charge : null);
-  net.lc = null; if (ch !== null) guestSend('release', { ch: r3(ch) });
+  const me = h?.agent, lc = net.lc, held = lc ? performance.now() - lc.t : 9999;
+  const ch = lc ? lc.v : (me?._ss === 'charge' ? me.charge : -1);                    // -1 = sin barra local: que el anfitrión use la suya (antes no se mandaba nada y el tiro quedaba TRABADO cargando)
+  net.lc = null;
+  if (held < TAP_FAKE_MS) guestSend('fake'); else guestSend('release', { ch: ch < 0 ? -1 : r3(ch) });
 }
 function padGameGuest(P, dt, h) {
+  if (inbPadCheck(P, h)) return;
   const E = P.pressed;
   if (E.menu) { openPause(); return; }
   if (E.camera) cycleCamera();
@@ -2305,7 +2413,7 @@ function onMatchEnded(info) {                            // llegó el resultado:
 /* ============ Bucle principal ============ */
 const G = {                                            // lo que ve la IA
   agents, B, ctx: { primary: [null, null], helper: [null, null], chasers: new Set() },
-  get dead() { return !!dead; }, get shotClock() { return shotClock; }, get time() { return gameTime; },
+  get dead() { return !!dead; }, get inbound() { return inbound; }, get inbSpot() { return inbSpot; }, get shotClock() { return shotClock; }, get time() { return gameTime; },
   attackHoop, ownHoop, prof, predictBall, startSteal, startBlock, doPass, aiShoot, tryDunk,
 };
 const clock = new THREE.Clock();
@@ -2391,13 +2499,57 @@ function updateHUD() {
   });
   for (let i = humans.length; i < 4; i++) { passMarks[i].visible = false; rings[i].visible = false; }
 }
+/* ---- v71 · SAQUE: cada compañero tiene un botón arriba de la cabeza; apretás el botón y le pasás ahí. Después sigue el juego normal ---- */
+let netIb = false;                                    // invitado online: ¿el anfitrión está en un saque?
+const INB_PAD = { ps: ['✕', '○', '□', '△'], xbox: ['A', 'B', 'X', 'Y'], both: ['A', 'B', 'X', 'Y'] };
+const inbMates = a => T[a.team].court.filter(t => t !== a && t.active).sort((x, y) => x.slot - y.slot).slice(0, 4);     // mismo orden en el anfitrión y en el invitado
+function inbCtl() {                                   // el humano LOCAL que está sacando ahora (o null)
+  if (mode !== 'match' || dead || autoUser || paused) return null;
+  if (netRole === 'guest') { const h = humans[1]; return netIb && h?.agent && B.holder === h.agent ? h : null; }
+  if (!inbound || !B.holder) return null;
+  const h = B.holder.hum; return h && h.dev !== 'net' && humanActive(h) ? h : null;
+}
+function inbPress(h, n) {
+  if (netRole === 'guest') { if (!inbMates(h.agent)[n]) return false; guestSend('inbp', { n }); return true; }
+  const a = h.agent, t = a && inbMates(a)[n]; if (!t || B.holder !== a) return false;
+  return doPass(a, t);
+}
+function inbPadCheck(P, h) {                          // botones de la cara del joystick (✕○□△ / ABXY): true si se usó uno para pasar
+  const raw = P?.raw || [], prev = h._rawPrev || []; h._rawPrev = raw.slice(0, 4);
+  if (inbCtl() !== h) return false;
+  for (let i = 0; i < 4; i++) if (raw[i] && !prev[i] && inbPress(h, i)) return true;
+  return false;
+}
+const inbEls = [];
+function inbLabels(h) {
+  const pad = (h.dev === 'pad' || humans.length === 1) && (h.P?.connected || Pad.state.connected), kb = h.dev !== 'pad';
+  const st = h.P?.style || Pad.state.style || 'both';
+  return [0, 1, 2, 3].map(i => [kb ? String(i + 1) : '', pad ? INB_PAD[st]?.[i] || INB_PAD.both[i] : ''].filter(Boolean).join(' · '));
+}
+const _pv = new THREE.Vector3();
+function updateInbTags() {
+  const h = inbCtl(), L = h ? inbLabels(h) : null, mates = h ? inbMates(h.agent) : [];
+  for (let i = 0; i < 4; i++) {
+    let el = inbEls[i];
+    if (!el) { el = inbEls[i] = document.createElement('div'); el.className = 'inb-tag'; document.body.appendChild(el); }
+    const t = mates[i];
+    if (!t || !L) { if (el.dataset.on) { el.style.display = 'none'; el.dataset.on = ''; } continue; }
+    _pv.set(t.pos.x, (t.y || 0) + 2.55, t.pos.z).project(camera);
+    if (_pv.z > 1) { el.style.display = 'none'; continue; }
+    if (L[i] !== el.textContent) el.textContent = L[i];
+    el.style.display = 'block'; el.dataset.on = '1';
+    el.style.left = `${(_pv.x * 0.5 + 0.5) * innerWidth}px`; el.style.top = `${(-_pv.y * 0.5 + 0.5) * innerHeight}px`;
+  }
+}
 function padGame(P, dt, h = humans[0]) {                // acciones del joystick (los mismos botones que NBA 2K, remapeables). h = a qué jugador pertenece este joystick
   if (netRole === 'guest') { padGameGuest(P, dt, h); return; }
+  if (inbPadCheck(P, h)) return;
   const c = h.agent, E = P.pressed, holds = B.holder === c;
   if (E.menu) { openPause(); return; }
   if (E.camera) cycleCamera();
+  if (c.state === 'charge' && (E.dribble || E.steal || E.pass || (P.flick && camMode !== 2)) && fakeShot(c)) return;       // v71: amague
   if (E.shoot && holds) startCharge(c);
-  if (P.released.shoot && c.state === 'charge') releaseCharge(c);
+  if (P.released.shoot && c.state === 'charge') releaseOrFake(c);
   if (E.pass) { if (holds) humanPass(h); else switchPlayer(h); }
   if (E.switch) switchPlayer(h);
   if (E.steal) { if (!startSteal(c) && c.state === 'dribble') startCrossover(c); }
@@ -2423,8 +2575,8 @@ function stepGame(dt) {
   if (mode === 'match') { checkDunkBlocks(); separate(); }
   for (const a of act) pose(a, dt);
   ballLogic(dt);
-  for (const t of [0, 1]) for (const b of T[t].bench) b.rest = Math.min(1, (b.rest ?? 1) + dt * 0.055 * recoverMul(b));       // los suplentes descansan
-  if (dead) updateDead(dt); else if (mode === 'match') { tickGame(dt); checkPlayerOut(); }
+  for (const t of [0, 1]) for (const b of T[t].bench) b.rest = Math.min(1, (b.rest ?? 1) + dt * BENCH_REC * recoverMul(b));       // los suplentes descansan
+  if (dead) updateDead(dt); else if (mode === 'match') { tickGame(dt); checkPlayerOut(); checkInbound(dt); }
 }
 function frame() {
   requestAnimationFrame(frame);
@@ -2442,12 +2594,12 @@ function frame() {
   if (netRole !== 'guest') updateRef(dt);
   arena.update(dt); Crowd.tick(dt, crowdCtx());
   if (netRole === 'host' && !paused) hostNetTick(dt); else if (netRole === 'guest' && !paused) guestNetTick(dt);
-  updateCamera(dt); updateScoreboard(); updateHUD();
+  updateCamera(dt); updateScoreboard(); updateHUD(); updateInbTags();
   hoops.forEach(h => h.net(dt));
   const padStats = !!PS.down?.stats || humans.some(h => h.dev === 'pad' && h.P?.down?.stats);      // ← de la cruceta (configurable): tabla de puntos mientras se mantiene
   Box.setAllowed(!paused && !Pause.isOpen() && !PM.isOpen() && !UI.isMainOpen() && !TS.isOpen() && !Online.isOpen() && Career.isHidden() && UT.isHidden());
   Box.setHeld('pad', padStats); Box.tick();
-  if (!UI.isMainOpen() && !PM.isOpen() && !TS.isOpen() && !Online.isOpen() && UT.isHidden()) renderer.render(scene, camera);   // con el menú previo abierto no hace falta dibujar la cancha de atrás
+  if (menuReady && !UI.isMainOpen() && !PM.isOpen() && !TS.isOpen() && !Online.isOpen() && UT.isHidden()) renderer.render(scene, camera);   // con el menú previo abierto no hace falta dibujar la cancha de atrás
 }
 Online.init({ onBack: () => UI.showMain(), onNeedLogin: () => { signOut().then(() => UI.showAuth()); }, onMatchStart: (S, role) => startGame(S, role), onGame: onNetGame, onMatchStop: stopOnlineMatch, onMatchEnded });
 PM.init({ onPlay: startGame, onExit: exitToMain, onOnlineChange: p => Online.sendPick(p), onOnlineReady: r => Online.setReady(r), onOnlineStart: () => Online.hostStart(), onOnlineLeave: () => Online.leave() }); bindButtons(); loadSetup(PM.getSetup()); applyTeams(); setMode('match'); agents.forEach(a => a.active && pose(a, 0.016)); frame();
@@ -2466,12 +2618,14 @@ function openUltimate() {                                                       
     onExit: () => UI.showMain(),
   });
 }
-UI.boot({ onTraining: () => openTrainSetup(false), onCasual: openCasual, onOnline: openOnline, onCareerCoach: openCareer, onUltimate: openUltimate });
+// v69: hasta que el menú (o el login) esté en pantalla no se dibuja la cancha 3D: antes se veía la cancha con los jugadores en el medio
+const menuP = Promise.race([UI.boot({ onTraining: () => openTrainSetup(false), onCasual: openCasual, onOnline: openOnline, onCareerCoach: openCareer, onUltimate: openUltimate }).catch(e => console.warn(e)), new Promise(r => setTimeout(r, 8000))]).then(() => { menuReady = true; });
 Boot.task(PM.ready().catch(() => {}), 'Cargando planteles…', 2);        // pantalla de carga (boot.js): espera también los planteles
-Boot.finish();
+Boot.task(menuP, 'Entrando…', 0.5);
+menuP.then(() => Boot.finish());
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
 });
 /* para depurar desde la consola del navegador: window.__bb */
 globalThis.__bb = { agents, B, T, G, hoops, step: stepGame, get scores() { return [scoreA, scoreB]; }, get dead() { return dead; }, get ctrl() { return ctrl; }, humans, camera, get camMode() { return camMode; }, set autoUser(v) { autoUser = v; },
-  get clock() { return [quarter, clockT, shotClock]; }, startGame, startTraining, setDiff: d => { diff = d; }, setQLen: s => { qLen = s; }, get mode() { return mode; }, setCourt: id => setCourt(courtById(id)), get paused() { return paused; }, set paused(v) { paused = v; }, keys, pass: humanPass };
+  get clock() { return [quarter, clockT, shotClock]; }, startGame, startTraining, setDiff: d => { diff = normDiff(d); }, setQLen: s => { qLen = s; }, get mode() { return mode; }, setCourt: id => setCourt(courtById(id)), get paused() { return paused; }, set paused(v) { paused = v; }, keys, pass: humanPass };

@@ -6,7 +6,8 @@
    lleguen con jitter). Reloj: se estima el desfase entre relojes con el mínimo de (llegada − envío), que descarta los snapshots demorados.
    ========================================================================== */
 
-export const SNAP_HZ = 20;
+export const SNAP_HZ = 20;         // por Supabase (relay)
+export const SNAP_HZ_P2P = 30;     // v71: con conexión directa (WebRTC) se manda más seguido: menos demora y más fluido
 export const STATES = ['free', 'dribble', 'charge', 'shoot', 'dunk'];
 export const MODES = ['loose', 'held', 'shot', 'pass', 'dead'];
 export const r2 = v => Math.round(v * 100) / 100;

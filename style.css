@@ -697,3 +697,10 @@ tr.top td.bx-pts { color: #fff; background: var(--c1); border-radius: 3px; }
 .sb-row.on { background: linear-gradient(90deg, #ffd569, #ffb81c); color: #161616; border-color: #ffe29a; box-shadow: 0 0 22px #ffb81c88; } .sb-row.on b, .sb-row.on i, .sb-row.on q, .sb-row.on em { color: #161616; }
 .sb-row.pick { outline: 3px solid #4fc3ff; outline-offset: 1px; }
 @media (max-width: 760px) { .sb-cols { grid-template-columns: 1fr; } }
+
+/* v71 · saque: botón de cada compañero flotando sobre su cabeza */
+.inb-tag { position: fixed; z-index: 35; display: none; transform: translate(-50%, -100%); pointer-events: none; min-width: 34px; padding: 4px 9px 5px; border-radius: 10px; text-align: center;
+  font: 800 22px/1 'Barlow Condensed', Arial Narrow, Arial, sans-serif; letter-spacing: .04em; color: #10131c; background: linear-gradient(#fff2b0, #ffc73a); border: 2px solid #fff;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .55); animation: inbPulse .9s ease-in-out infinite alternate; }
+.inb-tag::after { content: ''; position: absolute; left: 50%; bottom: -9px; margin-left: -6px; border: 6px solid transparent; border-top-color: #ffc73a; border-bottom: 0; }
+@keyframes inbPulse { from { transform: translate(-50%, -100%) scale(1); } to { transform: translate(-50%, -108%) scale(1.08); } }

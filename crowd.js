@@ -160,8 +160,9 @@ function hornSynth(g = 0.32) {
 export function setVolume(v) { vol = clamp(+v || 0, 0, 1); if (master) master.gain.setTargetAtTime(vol * 0.9, ctx.currentTime, 0.05); }
 export const getVolume = () => vol;
 /** Se llama al empezar cada partido (ya hubo un gesto del usuario, así que el navegador deja sonar). */
+export const MUTED = true;      // v71: sin sonidos de ambiente (público, bocina, cantos): en el partido solo suena el silbato del árbitro (main.js)
 export function start() {
-  if (!ensure()) return;
+  if (MUTED || !ensure()) return;
   T = 0; oppT = 0; nextChant = rnd(18, 32); nextShout = rnd(4, 9); lastReact = lastRim = -9; chanting = 0; hush = 0; oohAt = 0; started = true;
   ctx.resume?.().catch?.(() => {});
 }

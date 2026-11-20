@@ -1,4 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+import * as Acct from './acct.js';
 
 export const configured = !SUPABASE_URL.includes('TU-PROYECTO') && !SUPABASE_ANON_KEY.startsWith('TU-');
 const SB_CDN = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
@@ -33,7 +34,9 @@ async function fetchProfile(user) {
   const { data, error } = await c.from('profiles').select('*').eq('id', user.id).maybeSingle();
   if (error) throw error;
   profile = data || { id: user.id, username: user.user_metadata?.username || 'Jugador', level: 1, xp: 0, coins: 0 };
-  guest = false; emit(); return profile;
+  guest = false;
+  if (Acct.switchTo(user.id)) return new Promise(() => {});          // v71: otra cuenta → se recarga la página para cargar los datos de ESTA cuenta (nunca resuelve: la página se está yendo)
+  emit(); return profile;
 }
 
 /** Devuelve el perfil si ya hay sesión guardada, o null. */
@@ -68,9 +71,11 @@ export async function signUp(email, password, username) {
 export async function signOut() {
   await flushXp();
   try { if (sb) await sb.auth.signOut(); } catch (e) { console.warn(e); }
-  profile = null; guest = false; emit();
+  profile = null; guest = false;
+  if (Acct.switchTo('guest')) return;                                  // v71: se recarga y queda lo del invitado
+  emit();
 }
-export function playAsGuest() { guest = true; profile = { username: 'Invitado', level: 1, xp: 0, coins: 0 }; emit(); return profile; }
+export function playAsGuest() { guest = true; profile = { username: 'Invitado', level: 1, xp: 0, coins: 0 }; if (Acct.switchTo('guest')) return profile; emit(); return profile; }
 
 /* ---- XP: se junta en el juego y se manda a Supabase cada tanto (función add_xp) ---- */
 export function queueXp(n) {

@@ -1,4 +1,5 @@
 import { TEAMS } from './teams.js';
+import * as Acct from './acct.js';
 import { REAL_COURTS } from './courts.js';
 import { loadRoster, fallbackRoster, inchesToFtIn } from './roster.js';
 
@@ -10,7 +11,7 @@ import { loadRoster, fallbackRoster, inchesToFtIn } from './roster.js';
 
 const $ = id => document.getElementById(id);
 const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const KEY = 'basket3d_train';
+const KEY = Acct.scoped('basket3d_train');
 const DEF = { court: 'GSW', team: 'LAL', player: null, kit: 'team' };
 const cfg = (() => { try { return { ...DEF, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return { ...DEF }; } })();
 if (!REAL_COURTS.some(c => c.id === cfg.court)) cfg.court = DEF.court;

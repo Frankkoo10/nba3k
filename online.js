@@ -1,4 +1,5 @@
 import * as Auth from './auth.js';
+import * as Acct from './acct.js';
 import * as PM from './prematch.js';
 import { createLink } from './net.js';
 
@@ -21,7 +22,7 @@ import { createLink } from './net.js';
 
 const $ = id => document.getElementById(id);
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const KEY = 'basket3d_online';
+const KEY = Acct.scoped('basket3d_online');
 
 /* ---- reglas que define el anfitrión al crear la sala ---- */
 const YN = [['true', 'Sí'], ['false', 'No']];
@@ -30,9 +31,8 @@ export const RULES = [
   ['qLen', 'Duración del cuarto', [['60', '1 min'], ['120', '2 min'], ['180', '3 min'], ['300', '5 min'], ['480', '8 min']]],
   ['shotClock', 'Reloj de 24 segundos', YN],
   ['fatigue', 'Cansancio', YN],
-  ['autoSubs', 'Cambios automáticos', YN],
 ];
-const DEF = { name: '', pub: true, settings: { court: 'home', diff: 'hard', qLen: 180, shotClock: true, fatigue: true, autoSubs: true } };
+const DEF = { name: '', pub: true, settings: { court: 'home', diff: 'pro', qLen: 180, shotClock: true, fatigue: true, autoSubs: true } };
 const form = (() => {
   try { const s = JSON.parse(localStorage.getItem(KEY) || '{}'); return { ...DEF, ...s, settings: { ...DEF.settings, ...(s.settings || {}) } }; } catch { return { ...DEF, settings: { ...DEF.settings } }; }
 })();
@@ -222,7 +222,7 @@ async function enter(room, role) {
     link: null, linkState: 'relay', inMatch: false, init: null, lostT: 0,
   };
   const s = room.settings || {};
-  sess.init = { role, code: room.code, name: room.name, pub: room.is_public, settings: { court: s.court || 'home', diff: s.diff || 'hard', qLen: +s.qLen || 180, shotClock: s.shotClock !== false, fatigue: s.fatigue !== false, autoSubs: s.autoSubs !== false }, hostName: role === 'host' ? me.username : room.host_name, guestName: role === 'host' ? room.guest_name : me.username, meReady: false, oppReady: false, oppOnline: false };
+  sess.init = { role, code: room.code, name: room.name, pub: room.is_public, settings: { court: s.court || 'home', diff: s.diff || 'pro', qLen: +s.qLen || 180, shotClock: s.shotClock !== false, fatigue: s.fatigue !== false, autoSubs: s.autoSubs !== false }, hostName: role === 'host' ? me.username : room.host_name, guestName: role === 'host' ? room.guest_name : me.username, meReady: false, oppReady: false, oppOnline: false };
   PM.openWizard({ step: 1, online: { ...sess.init } });
   syncState();
   try {

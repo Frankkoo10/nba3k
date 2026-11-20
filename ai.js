@@ -6,7 +6,7 @@
    - en defensa: marca a su hombre del lado del aro, presiona al que tiene la pelota, intenta robar, salta a taponar
      y ayuda cuando un rival penetra;
    - en rebotes: bloquea y salta a buscar la pelota.
-   La dificultad (fácil / difícil / extremo) cambia velocidad, tiempo de reacción, puntería, agresividad defensiva, etc.
+   La dificultad (rookie / semi-rookie / profesional / semi-star / all-star) cambia velocidad, tiempo de reacción, puntería, agresividad defensiva, etc.
    ========================================================================== */
 
 import { shotMul, deepMul, shootBias, tend } from './skill.js';
@@ -21,12 +21,25 @@ const COURT_X = 7.62, COURT_Z = 14.325;
    acc: puntería · stealAtt/stealSucc/blockAtt: robos y tapones · tight: presión defensiva (0 suelto … 1 pegado)
    help: ayuda defensiva · passErr: error en los pases · moveRate: cruces por segundo · react: anticipación
    protect: cuánto cuida la pelota (más alto = se la sacan menos) · intercept: intercepta pases · stamina: ritmo de cansancio */
-const BASE = {
+const OLD = {   // los tres perfiles originales (fácil / difícil / extremo): los 5 niveles salen de acá
   easy:    { spd: 0.82, think: 0.55, shotThr: 0.47, acc: 0.62, stealAtt: 0.18, stealSucc: -0.12, blockAtt: 0.12, tight: 0.15, help: 0.15, passErr: 1.7, moveRate: 0.2, react: 0.2, protect: 0.72, intercept: 0.05, stamina: 1.2, passBias: 0.10, cut: 0.5 },
   hard:    { spd: 0.96, think: 0.30, shotThr: 0.40, acc: 0.88, stealAtt: 0.40, stealSucc: 0.0, blockAtt: 0.32, tight: 0.60, help: 0.55, passErr: 1.0, moveRate: 0.55, react: 0.55, protect: 1.0, intercept: 0.12, stamina: 1.0, passBias: 0.07, cut: 0.9 },
   extreme: { spd: 1.06, think: 0.14, shotThr: 0.35, acc: 1.12, stealAtt: 0.65, stealSucc: 0.12, blockAtt: 0.60, tight: 1.0, help: 1.0, passErr: 0.55, moveRate: 1.0, react: 1.0, protect: 1.35, intercept: 0.25, stamina: 0.85, passBias: 0.05, cut: 1.2 },
 };
-const ALLY = { ...BASE.hard, spd: 0.97, acc: 0.85, stealAtt: 0.35, blockAtt: 0.25, tight: 0.55, protect: 1.0, intercept: 0.12 };
+const mix = (A, B, t) => Object.fromEntries(Object.keys(A).map(k => [k, A[k] + (B[k] - A[k]) * t]));
+/* v69 · 5 niveles: Rookie · Semi-Rookie · Profesional · Semi-Star · All-Star.
+   `spd` (velocidad extra del rival) ahora es chica: la velocidad real sale de los atributos de cada jugador (skill.js), así un plantel 83 corre menos que uno 94 en cualquier nivel. */
+const BASE = {
+  rookie:     { ...OLD.easy, spd: 0.90, acc: 0.58, think: 0.60 },
+  semirookie: { ...mix(OLD.easy, OLD.hard, 0.5), spd: 0.95 },
+  pro:        { ...OLD.hard, spd: 0.99 },
+  semistar:   { ...mix(OLD.hard, OLD.extreme, 0.5), spd: 1.02 },
+  allstar:    { ...OLD.extreme, spd: 1.04 },
+};
+export const DIFFS = [['rookie', 'Rookie'], ['semirookie', 'Semi-Rookie'], ['pro', 'Profesional'], ['semistar', 'Semi-Star'], ['allstar', 'All-Star']];
+export const DIFF_ALIAS = { easy: 'rookie', hard: 'pro', extreme: 'allstar' };      // partidas / ajustes guardados con los nombres viejos
+export const normDiff = d => (BASE[d] ? d : DIFF_ALIAS[d] || 'pro');
+const ALLY = { ...BASE.pro, spd: 0.97, acc: 0.85, stealAtt: 0.35, blockAtt: 0.25, tight: 0.55, protect: 1.0, intercept: 0.12 };
 export const PROFILES = Object.fromEntries(Object.entries(BASE).map(([k, opp]) => [k, { opp, ally: ALLY }]));
 
 /* ---- Estilo de juego de TU equipo (menú previo al partido, paso "Tu equipo") ----
@@ -147,7 +160,11 @@ function handler(G, a, dt, I) {
   if (a.state !== 'dribble') return;
   if (ai.inb) {                                              // saque: espera un momento y pasa
     ai.inbT -= dt;
-    if (ai.inbT <= 0) { ai.inb = false; const bp = bestPass(G, a, true); if (bp) G.doPass(a, bp.t); }
+    if (ai.inbT <= 0) {
+      const bp = bestPass(G, a, true); let t = bp ? bp.t : null;
+      if (!t) { let bd = 99; for (const m of G.agents) if (m.active && m.team === a.team && m !== a) { const d = hyp(m.pos.x - a.pos.x, m.pos.z - a.pos.z); if (d < bd) { bd = d; t = m; } } }   // sin buen pase: al más cercano (nunca se queda sin sacar)
+      if (t && G.doPass(a, t)) ai.inb = false;
+    }
     return;
   }
   const nd = nearestOpp(G, a), sc = G.shotClock;
@@ -196,6 +213,13 @@ function offBall(G, a, dt, I) {
     ai.t = (1.8 + rnd() * 2.6) / (prof.pace ?? 1); ai.k = rnd() < 0.5 ? ai.k : Math.floor(rnd() * 3);
     if (B.holder && B.holder.team === a.team && rnd() < 0.3 * prof.cut) { ai.cutT = 1.3; ai.cutX = (rnd() - 0.5) * 2.6; }
   }
+  const h0 = B.holder;
+  if (G.inbound && G.inbSpot && h0 && h0.team === a.team && h0 !== a) {       // v69 · saque: se abren a distintas distancias y alturas para ofrecerse
+    const sp = G.inbSpot, off = [-5, -2.5, 0, 2.5, 5][a.slot] ?? 0, depth = 4.5 + (ai.k % 3) * 2.2;
+    dirTo(I, a, sp.x + sp.ix * depth - sp.iz * off, sp.z + sp.iz * depth + sp.ix * off, { sprint: true, sprintDist: 3 });
+    I.face = Math.atan2(h0.pos.x - a.pos.x, h0.pos.z - a.pos.z);
+    return;
+  }
   let [tx, tz] = spotXZ(hoop, a.slot, ai.k);
   if (ai.cutT > 0) { ai.cutT -= dt; tx = ai.cutX; tz = hoop.hz - hoop.s * 1.5; }
   const h = B.holder;
@@ -210,6 +234,13 @@ function offBall(G, a, dt, I) {
 function defend(G, a, dt, I) {
   const B = G.B, h = B.holder, prof = G.prof(a), ai = a.ai, own = G.ownHoop(a.team), ctx = G.ctx;
   ai.stealT -= dt;
+  const inbD = G.inbound && G.inbSpot && h && h.team !== a.team;            // v69 · saque rival: se marca a distancia, sin robos ni tapones
+  if (inbD && ctx.primary[a.team] === a) {
+    const sp = G.inbSpot;
+    dirTo(I, a, h.pos.x + sp.ix * 2.7, h.pos.z + sp.iz * 2.7, { full: true, sprint: true, stop: 0.2 });
+    I.face = Math.atan2(h.pos.x - a.pos.x, h.pos.z - a.pos.z);
+    return;
+  }
   if (h && h.team !== a.team && ctx.primary[a.team] === a) {       // ---- marca a la pelota
     const hx = h.pos.x, hzz = h.pos.z, dxh = 0 - hx, dzh = own.hz - hzz, dd = hyp(dxh, dzh) || 1;
     const gap = 0.95 + (1 - prof.tight) * 1.1 - (h.state === 'charge' ? 0.25 : 0) - clamp(((a.info.perD ?? 70) - 70) * 0.004, -0.15, 0.12);   // el buen defensor perimetral marca más pegado
@@ -238,6 +269,7 @@ function defend(G, a, dt, I) {
     if (ai.helpRoll !== h.shotId + '|' + Math.floor(G.time / 1.2)) { ai.helpRoll = h.shotId + '|' + Math.floor(G.time / 1.2); ai.helping = rnd() < prof.help; }
     if (ai.helping) { const ex = h.pos.x - 0, ez = h.pos.z - own.hz, el = hyp(ex, ez) || 1; tx = ex / el * 1.7; tz = own.hz + ez / el * 1.7; }
   }
+  if (inbD) { const ddx = tx - h.pos.x, ddz = tz - h.pos.z, dl = hyp(ddx, ddz) || 1; if (dl < 2.9) { tx = h.pos.x + ddx / dl * 2.9; tz = h.pos.z + ddz / dl * 2.9; } }
   dirTo(I, a, tx, tz, { sprint: true, sprintDist: 4 });
   const toMark = hyp(mx - a.pos.x, mz - a.pos.z);
   I.face = toMark < 3.2 ? Math.atan2(mx - a.pos.x, mz - a.pos.z) : Math.atan2(B.bp.x - a.pos.x, B.bp.z - a.pos.z);

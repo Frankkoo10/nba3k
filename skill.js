@@ -34,10 +34,14 @@ export function releaseSkill(info, three, d) {
 }
 
 /* ---- Físico ---- */
-/** Velocidad máxima: 70 → ×0.965 · 90 → ×1.075 · 99 → ×1.10 · 50 → ×0.855 · 40 → ×0.80 */
-export const speedMul = info => clamp(0.965 + (R(info.speed) - 70) * 0.0055, 0.80, 1.10);
-/** Aceleración / cambios de dirección. */
-export const accelMul = info => clamp(0.90 + (R(info.speed) - 60) * 0.005, 0.75, 1.2);
+/** Velocidad máxima (v69: curva más abierta, así 99 se nota contra 70): 99 → ×1.14 · 90 → ×1.09 · 70 → ×0.97 · 60 → ×0.885 · 50 → ×0.80 · 40 → ×0.715 */
+export const speedMul = info => { const r = R(info.speed); return clamp(r >= 70 ? 0.97 + (r - 70) * 0.0058 : 0.97 - (70 - r) * 0.0085, 0.66, 1.15); };
+/** Aceleración y cambios de dirección: 99 → ×1.28 · 70 → ×0.97 · 50 → ×0.78 · 40 → ×0.68 */
+export const accelMul = info => { const r = R(info.speed); return clamp(r >= 70 ? 0.97 + (r - 70) * 0.0107 : 0.97 - (70 - r) * 0.0097, 0.6, 1.3); };
+/** Manejo de balón: se aplica solo con la pelota en la mano, a la aceleración y al giro. 99 → ×1.30 · 85 → ×1.12 · 70 → ×1 · 60 → ×0.82 · 40 → ×0.62 */
+export const handleMul = info => { const r = R(info.handle); return clamp(r >= 70 ? 1 + (r - 70) * 0.0103 : 1 - (70 - r) * 0.0128, 0.55, 1.32); };
+/** Velocidad con la pelota (dribleando) respecto de la de sprint sin ella: 99 → ×1.07 · 70 → ×0.97 · 60 → ×0.93 · 40 → ×0.85 */
+export const ballSpeedMul = info => clamp(0.93 + (R(info.speedBall) - 60) * 0.0040, 0.8, 1.08);
 /** Qué tan rápido se cansa (menor = aguanta más). 99 → ×0.65 · 70 → ×1 · 40 → ×1.36 */
 export const drainMul = info => clamp(1 - (R(info.stamina) - 70) * 0.012, 0.55, 1.6);
 /** Qué tan rápido recupera energía. 99 → ×1.35 · 70 → ×1 · 40 → ×0.64 */

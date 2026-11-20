@@ -1,11 +1,10 @@
 import * as P3D from './players3d.js';
-import * as Intro from './intro.js';
 
 /* ============================================================================
    Pantalla de carga (v50)
    Al abrir el juego se ve la pantalla de carga (el HTML está en index.html, así aparece al instante) y se baja por adelantado lo pesado:
    pelota, canchas 3D, escudos e imagen del menú (lista en assets/manifest.json, la arma tools/crear_manifiesto.py).
-   La barra avanza por MB bajados. Cuando termina y el juego ya está armado, la pantalla se desvanece.
+   La barra avanza por MB bajados. v69: sin cinemática ni "presioná una tecla": cuando termina de cargar y el menú ya está armado, la pantalla se desvanece sola y entrás directo al juego.
    · Boot.task(promesa, 'texto', peso) → suma algo más a esperar (main.js lo usa con los planteles).
    · Boot.finish()                      → main.js avisa que terminó de armar el juego.
    ========================================================================== */
@@ -18,7 +17,7 @@ const el = { root: $('boot'), fill: $('bootFill'), pct: $('bootPct'), txt: $('bo
 const t0 = performance.now();
 
 const items = [];                 // { label, size, got, done }
-let extraTotal = 0, extraDone = 0, gameReady = false, finished = false, listReady = false, dlDone = false, titleDone = false, ready = false;
+let extraTotal = 0, extraDone = 0, gameReady = false, finished = false, listReady = false, dlDone = false, ready = false;
 const resolvers = [];
 
 const total = () => items.reduce((t, i) => t + i.size, 0) + extraTotal;
@@ -53,47 +52,34 @@ export function task(promise, label = 'Cargando…', weightMB = 2) {
 export function finish() { gameReady = true; tryClose(); }
 
 let closeP = null;
-async function tryClose() {                  // todo bajado + juego armado + cinemática en el título → se muestra "presioná cualquier tecla"
-  if (finished || closeP || !gameReady || !listReady || !dlDone || !titleDone) return;
+async function tryClose() {                  // todo bajado + juego armado (menú listo) → la pantalla se va sola
+  if (finished || closeP || !gameReady || !listReady || !dlDone) return;
   closeP = (async () => {
     await Promise.all(resolvers);
     const wait = MIN_SHOW_MS - (performance.now() - t0); if (wait > 0) await new Promise(r => setTimeout(r, wait));
-    arm();
+    ready = true; paint('¡Listo!');
+    await new Promise(r => setTimeout(r, 250));                         // un instante con la barra al 100 %
+    close();
   })();
 }
-let armed = false, padTimer = 0;
-function arm() {
-  if (finished || armed) return; armed = true; ready = true; paint('¡Listo!');
-  el.root?.classList.add('ready');
-  padTimer = setInterval(() => {                                        // joystick: cualquier botón
-    for (const p of navigator.getGamepads?.() || []) if (p && p.buttons.some(b => b.pressed)) { enter(); return; }
-  }, 100);
-}
-function enter() { if (armed) close(); }
 function close() {
-  if (finished) return; finished = true; ready = true; paintNow('¡Listo!'); clearInterval(padTimer); Intro.stop();
+  if (finished) return; finished = true; ready = true; paintNow('¡Listo!');
   removeEventListener('keydown', onKey, true); removeEventListener('pointerdown', onPointer, true); removeEventListener('click', onPointer, true);
   if (!el.root) return;
-  setTimeout(() => { el.root.classList.add('out'); setTimeout(() => el.root.remove(), 700); }, 150);
+  el.root.classList.add('out'); setTimeout(() => el.root.remove(), 750);
 }
-/* Entradas: mientras la pantalla está, ninguna tecla ni clic llega al juego. Durante la cinemática saltan al título; con el juego listo, entran. */
-function press(e) {
-  if (finished) return;
-  e.stopImmediatePropagation();
-  if (!titleDone) { Intro.skip(); return; }
-  enter();
-}
+/* Entradas: mientras la pantalla está, ninguna tecla ni clic llega al juego. */
 function onKey(e) {
+  if (finished) return;
   if (e.ctrlKey || e.metaKey || e.altKey || /^F\d+$/.test(e.key) || ['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;   // F5, Ctrl+R, etc. siguen funcionando
-  if (e.type === 'keydown') press(e);
+  e.stopImmediatePropagation();
 }
-function onPointer(e) { if (e.target === el.skip) return; if (e.type === 'pointerdown') press(e); else e.stopImmediatePropagation(); }
+function onPointer(e) { if (finished || e.target === el.skip) return; e.stopImmediatePropagation(); }
 addEventListener('keydown', onKey, true); addEventListener('pointerdown', onPointer, true); addEventListener('click', onPointer, true);
-if (el.skip) el.skip.onclick = () => { gameReady = true; listReady = true; dlDone = true; titleDone = true; Intro.skip(); armed = true; close(); };
-setTimeout(() => { if (!finished && !armed && el.skip) el.skip.hidden = false; }, SKIP_AFTER_MS);
+if (el.skip) el.skip.onclick = () => { gameReady = true; listReady = true; dlDone = true; close(); };
+setTimeout(() => { if (!finished && el.skip) el.skip.hidden = false; }, SKIP_AFTER_MS);
 
-/* v53: la cinemática corre sola (sin que el juego se arme al mismo tiempo): cuando llega al título recién se carga el motor 3D y se arma el juego (main.js).
-   Los archivos (pelota, canchas, escudos) igual se bajan durante la cinemática: eso es red, no frena la animación. */
+/* v69: no hay cinemática: el motor 3D y el juego se arman apenas arranca la carga (los módulos ya se bajaron con modulepreload) y la barra cuenta todo. */
 let gameStarted = false;
 function startGame() {
   if (gameStarted) return; gameStarted = true;
@@ -101,7 +87,7 @@ function startGame() {
   task(P3D.ensureLib().catch(() => {}), 'Cargando motor 3D…', 1.5);     // GLTFLoader y SkeletonUtils
   import('./main.js').catch(e => { console.error('No se pudo iniciar el juego', e); gameReady = true; tryClose(); });
 }
-Intro.start({ onTitle: () => { titleDone = true; startGame(); tryClose(); } });          // cinemática de inicio (intro.js)
+startGame();
 
 const warmImg = url => new Promise(res => { const im = new Image(); im.onload = im.onerror = () => res(); im.src = url; });
 
