@@ -198,3 +198,19 @@
 #utStage .st i { display: block; height: 100%; width: 0; border-radius: 5px; background: linear-gradient(90deg, #fff, #ffd45a); box-shadow: 0 0 12px #fff; transition: width .7s cubic-bezier(.2, .9, .3, 1); }
 #utStage .st.on i { width: var(--w); }
 #utStage .st em { width: 40px; text-align: right; font: italic 800 24px 'Barlow Condensed', Impact, sans-serif; color: #fff; }
+
+/* v71 · Champion Star */
+.m-champion { background: linear-gradient(100deg, #6b1020, #0b1020); }
+.mode-c.m-champion.on { border-color: #ffc73a; }
+.cs-prizes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 8px 0 16px; }
+.cs-prize { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #10162c; text-align: center; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.cs-prize b { font: italic 800 36px 'Barlow Condensed', sans-serif; } .cs-prize.p1 { border-color: #ffc73a; } .cs-prize.p1 b { color: #ffc73a; } .cs-prize.p2 b { color: #cfd6e6; } .cs-prize.p3 b { color: #d08a4a; }
+.cs-table { width: 100%; border-collapse: collapse; } .cs-table th, .cs-table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--line); } .cs-table th { opacity: .6; font-size: 12px; }
+.cs-table tr.top td:first-child { color: #ffc73a; font-weight: 800; } .cs-table tr.me { background: rgba(255, 199, 58, .14); }
+.cs-pend { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 14px; border: 1px solid #ffc73a; border-radius: 12px; background: rgba(255, 199, 58, .1); }
+@media (max-width: 700px) { .cs-prizes { grid-template-columns: 1fr; } }
+
+/* v72 · confirmar compra en el mercado */
+.mk-ask { cursor: pointer; }
+.buy-lines { margin: 10px 0; display: grid; gap: 6px; } .buy-lines > div { display: flex; justify-content: space-between; gap: 18px; padding: 6px 10px; border-radius: 8px; background: rgba(255, 255, 255, .06); }
+.buy-lines .bad b { color: #ff7a7a; }

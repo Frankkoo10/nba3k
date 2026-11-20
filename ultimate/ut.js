@@ -16,7 +16,7 @@ const TABS = [['inicio', 'INICIO'], ['objetivos', 'OBJETIVOS'], ['jugar', 'JUGAR
 const QLENS = [[60, '1:00'], [120, '2:00'], [180, '3:00'], [300, '5:00']];
 const POS_XY = { SF: [18, 26], C: [50, 26], PF: [82, 26], SG: [31, 74], PG: [69, 74] };      // fila de adelante (SF · C · PF) y fila de atrás (SG · PG): sin cartas superpuestas
 let root = null, hooks = {}, open_ = false, tab = 'inicio', modal = null, sel = null, toastT = 0, tickT = 0, loading = false, unsub = null;
-const V = { play: 'rookie', stage: 1, mk: 'buy', mkf: { q: '', pos: '', team: '', min: '', sort: 'ovr' }, mkLimit: 36, mkRows: null, mkErr: '', mkLoading: false, col: { pos: '', sort: 'ovr', q: '' } };
+const V = { cs: { loaded: false, loading: false, rows: [], me: null, month: '', err: '', pending: null }, play: 'rookie', stage: 1, mk: 'buy', mkf: { q: '', pos: '', team: '', min: '', sort: 'ovr' }, mkLimit: 36, mkRows: null, mkErr: '', mkLoading: false, col: { pos: '', sort: 'ovr', q: '' } };
 export const isHidden = () => !open_ || !root || root.hidden;
 export const isOpen = () => open_;
 
@@ -106,7 +106,7 @@ function inicio() {
     <section class="u-card sqd"><h3>TU PLANTILLA <button type="button" class="link" data-act="tab" data-v="plantilla">VER TODA ›</button></h3><div class="sqd-row">${sq.s.map(c => c ? cardEl(c, { act: 'card' }) : '<div class="uc empty">+</div>').join('')}</div></section>
     <section class="u-card pks"><h3>SOBRES DESTACADOS <button type="button" class="link" data-act="tab" data-v="tienda">TIENDA ›</button></h3><div class="pks-row">${['oro', 'elite', 'especial'].map(k => `<button type="button" class="pk-i" data-act="tab" data-v="tienda">${foil(k, true)}<span>${U.PACKS[k].name.toUpperCase()}</span></button>`).join('')}</div></section>
     <section class="u-card dly"><h3>OBJETIVOS DIARIOS <button type="button" class="link" data-act="tab" data-v="objetivos">VER TODOS ›</button></h3>${dl.map(o => `<div class="dly-r"><div><span>${esc(o.t)}</span>${bar(U.progOf(o) / o.n)}</div><em>${U.progOf(o)} / ${o.n}</em>${rewardChips(o.r)}</div>`).join('')}</section>
-    <section class="modes"><h3>MODOS DE JUEGO</h3>${['rookie', 'dream', 'allstar', 'squad'].map(k => `<button type="button" class="mode-t m-${k}" data-act="gomode" data-v="${k}"><b>${U.MODE_NAME[k].toUpperCase()}</b><i>›</i></button>`).join('')}</section></div>`;
+    <section class="modes"><h3>MODOS DE JUEGO</h3>${['rookie', 'dream', 'allstar', 'squad', 'champion'].map(k => `<button type="button" class="mode-t m-${k}" data-act="gomode" data-v="${k}"><b>${U.MODE_NAME[k].toUpperCase()}</b><i>›</i></button>`).join('')}</section></div>`;
 }
 
 /* ============================== OBJETIVOS ============================== */
@@ -123,22 +123,54 @@ function objetivos() {
 /* ============================== JUGAR ============================== */
 const MODE_INFO = {
   rookie: ['ROOKIE BATTLES', 'Diez etapas contra rivales cada vez más duros. Superá cada una para desbloquear la siguiente y ganar premios.'],
-  dream: ['DREAM LIVE', 'Escalá de la División 10 a la 1. Cada victoria suma puntos y las rachas los multiplican (2 seguidas ×2, 4 seguidas ×3); con 15 ascendés. Si perdés y bajás de 0 puntos, descendés. Premios por victorias de la semana.'],
-  allstar: ['ALL-STAR LIVE', 'Pagás la entrada y jugás una clasificatoria de 5 partidos en Difícil: con 2 victorias pasás a la fase final de 10 partidos en Extremo, con premio por cada victoria.'],
+  dream: ['DREAM LIVE', 'Escalá de la División 10 a la 1 (la dificultad del rival sube con cada división: Rookie → Semi-Rookie → Profesional → Semi-Star → All-Star). Cada victoria suma puntos y las rachas los multiplican (2 seguidas ×2, 4 seguidas ×3); con 15 ascendés. Si perdés y bajás de 0 puntos, descendés. Premios por victorias de la semana.'],
+  allstar: ['ALL-STAR LIVE', 'Pagás la entrada y jugás una clasificatoria de 5 partidos en dificultad Semi-Star (muy difícil): con 2 victorias pasás a la fase final de 10 partidos, también en Semi-Star, con premio por cada victoria.'],
   squad: ['SQUAD BATTLES', 'Elegí el nivel del rival y jugá cuando quieras. Sumá puntos semanales para premios.'],
+  champion: ['CHAMPION STAR', 'La dificultad más alta (All-Star). Cada victoria suma puntos y cada derrota resta: competís en el ranking mensual contra todos los jugadores. Al terminar el mes, el TOP 3 se lleva premios enormes de monedas y sobres.'],
 };
 function jugar() {
   const k = V.play, S = U.get();
-  const sel_ = ['rookie', 'dream', 'allstar', 'squad'].map(m => `<button type="button" class="mode-c m-${m}${k === m ? ' on' : ''}" data-act="mode" data-v="${m}"><b>${MODE_INFO[m][0]}</b><small>${{ rookie: `Etapa ${S.modes.rookie.stage} de 10`, dream: `División ${S.modes.dream.div}`, allstar: S.modes.allstar.run ? (S.modes.allstar.run.phase === 'qual' ? `Clasificatoria · ${S.modes.allstar.run.qw}/${U.ALLSTAR.qual.need}` : `Fase final · ${S.modes.allstar.run.w} victorias`) : `Mejor: ${S.modes.allstar.best} victorias`, squad: `${S.modes.squad.pts} pts esta semana` }[m]}</small></button>`).join('');
+  const sel_ = ['rookie', 'dream', 'allstar', 'squad', 'champion'].map(m => `<button type="button" class="mode-c m-${m}${k === m ? ' on' : ''}" data-act="mode" data-v="${m}"><b>${MODE_INFO[m][0]}</b><small>${{ rookie: `Etapa ${S.modes.rookie.stage} de 10`, dream: `División ${S.modes.dream.div}`, allstar: S.modes.allstar.run ? (S.modes.allstar.run.phase === 'qual' ? `Clasificatoria · ${S.modes.allstar.run.qw}/${U.ALLSTAR.qual.need}` : `Fase final · ${S.modes.allstar.run.w} victorias`) : `Mejor: ${S.modes.allstar.best} victorias`, squad: `${S.modes.squad.pts} pts esta semana`, champion: `${S.modes.champion.pts} pts este mes` }[m]}</small></button>`).join('');
   const q = U.squadCards(), ok = U.squadReady();
   const head = `<div class="mode-head"><div><h2>${MODE_INFO[k][0]}</h2><p>${MODE_INFO[k][1]}</p></div><div class="mh-sq">${bar(0)}<span>Tu media</span><b>${U.rating()}</b></div></div>${ok ? '' : '<div class="warn">Te faltan jugadores titulares. Completá tu equipo en <button type="button" class="link" data-act="tab" data-v="plantilla">PLANTILLA</button> (o usá “Autoarmar”).</div>'}`;
   return `<div class="play"><div class="mode-row">${sel_}</div><section class="u-card mode-body">${head}${modeBody(k)}</section></div>`;
 }
+/* ---- Champion Star: ranking mensual ---- */
+async function csLoad() {
+  const c = V.cs; if (c.loading) return; c.loading = true; c.err = '';
+  try {
+    const [b, pend] = await Promise.all([U.championBoard(), U.championPending()]);
+    c.rows = b?.rows || []; c.me = b?.me || null; c.month = b?.month || ''; c.pending = pend; c.loaded = true;
+  } catch (e) { c.err = e.message || 'Error de conexión'; c.loaded = true; }
+  c.loading = false; if (V.play === 'champion' && tab === 'jugar' && !modal) render();
+}
+function championBody() {
+  const S = U.get(), c = S.modes.champion, C = U.CHAMPION, v = V.cs, online = U.championAvailable();
+  if (online && !v.loaded && !v.loading) setTimeout(csLoad, 0);
+  const rk = v.me?.rk, nx = Math.min(c.streak || 0, C.streakMax) * C.streakBonus;
+  const prizes = C.top.map((r, i) => `<div class="cs-prize p${i + 1}"><small>PUESTO</small><b>${i + 1}º</b>${rewardChips(r)}</div>`).join('');
+  const pend = v.pending ? `<section class="cs-pend"><div><h3>¡QUEDASTE ${v.pending.rank}º EN ${U.monthLabel(v.pending.month).toUpperCase()}!</h3><p class="mute">Tu premio del ranking te está esperando.</p>${rewardChips(C.top[v.pending.rank - 1])}</div><button type="button" class="u-btn gold big" data-act="cs-claim" data-v="${v.pending.month}">RECLAMAR PREMIO</button></section>` : '';
+  const rows = v.rows.map(r => `<tr class="${r.me ? 'me' : ''}${r.rk <= 3 ? ' top' : ''}"><td>${r.rk}</td><td>${esc(r.name)}</td><td>${r.w}-${r.l}</td><td><b>${r.pts}</b></td></tr>`).join('');
+  const table = !online ? '<p class="mute">Iniciá sesión con tu cuenta para entrar al ranking (con el modo invitado no se puede).</p>'
+    : v.err ? `<p class="warn">${esc(v.err)}</p>` : v.loading && !v.loaded ? '<p class="mute">Cargando ranking…</p>'
+    : rows ? `<table class="cs-table"><thead><tr><th>#</th><th>Jugador</th><th>V-D</th><th>Puntos</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="mute">Todavía nadie jugó este mes. ¡Sé el primero!</p>';
+  return `<div class="cs">${pend}
+    <section class="dl-top">
+      <div class="div-badge"><small>TU PUESTO</small><b>${rk ? '#' + rk : '—'}</b></div>
+      <div class="dl-pts"><div class="row"><b class="dl-t">PUNTOS DE ${U.monthLabel(U.monthKey()).toUpperCase()}</b><span class="dl-n">${c.pts}</span></div>
+        <p class="mute">${c.w} victorias · ${c.l} derrotas · racha ${c.streak || 0} (mejor ${c.best || 0}) · el mes termina en ${U.fmtLeft(U.msToMonthEnd())}</p></div>
+      <div class="dl-play"><div class="dl-if win"><small>SI GANÁS</small><b>+${C.win + nx} pts</b><span>+${C.bigWin} más si ganás por ${C.bigMargin} o más</span></div><div class="dl-if loss"><small>SI PERDÉS</small><b>−${C.loss} pts</b><span>abandonar resta ${C.abandon}</span></div>
+        <button type="button" class="u-btn gold big" data-act="play-champion" ${U.squadReady() && online ? '' : 'disabled'}>JUGAR PARTIDO</button></div>
+    </section>
+    <h3 class="sub">PREMIOS DEL MES <small>solo el TOP 3 · se reclaman cuando termina el mes</small></h3><div class="cs-prizes">${prizes}</div>
+    <h3 class="sub">RANKING DEL MES <small><button type="button" class="link" data-act="cs-refresh">ACTUALIZAR</button></small></h3>${table}</div>`;
+}
 function modeBody(k) {
+  if (k === 'champion') return championBody();
   const S = U.get(), M = S.modes;
   if (k === 'rookie') {
     return `<div class="stages">${U.ROOKIE.map(s => { const st = M.rookie.stars[s.n] || 0, lock = s.n > M.rookie.stage, on = V.stage === s.n; return `<button type="button" class="stage${st ? ' done' : ''}${lock ? ' lock' : ''}${on ? ' on' : ''}" data-act="stage" data-v="${s.n}" ${lock ? 'disabled' : ''}><b>${s.n}</b><span>${lock ? '🔒' : '★'.repeat(st) + '☆'.repeat(3 - st)}</span><small>Rival ${s.rating}</small></button>`; }).join('')}</div>
-      ${(() => { const s = U.ROOKIE[V.stage - 1], first = !(M.rookie.stars[V.stage] > 0); return `<div class="stage-info"><div><h3>ETAPA ${s.n}</h3><p>Rival: media ${s.rating} · Dificultad ${s.diff === 'easy' ? 'Fácil' : 'Difícil'}</p><p class="mute">${first ? 'Premio por superarla la primera vez:' : 'Ya la superaste (repetirla paga solo las monedas del partido):'} ${first ? rewardChips({ coins: s.coins, packs: s.packs }) : ''}</p></div><button type="button" class="u-btn gold big" data-act="play-rookie" ${U.squadReady() ? '' : 'disabled'}>JUGAR ETAPA ${s.n}</button></div>`; })()}`;
+      ${(() => { const s = U.ROOKIE[V.stage - 1], first = !(M.rookie.stars[V.stage] > 0); return `<div class="stage-info"><div><h3>ETAPA ${s.n}</h3><p>Rival: media ${s.rating} · Dificultad ${U.DIFF_NAME[s.diff]}</p><p class="mute">${first ? 'Premio por superarla la primera vez:' : 'Ya la superaste (repetirla paga solo las monedas del partido):'} ${first ? rewardChips({ coins: s.coins, packs: s.packs }) : ''}</p></div><button type="button" class="u-btn gold big" data-act="play-rookie" ${U.squadReady() ? '' : 'disabled'}>JUGAR ETAPA ${s.n}</button></div>`; })()}`;
   }
   if (k === 'dream') {
     const d = M.dream, w = U.DREAM.weekly, D = U.DREAM, P = U.MATCH_PAY, st = d.streak || 0, nx = D.mult(st + 1);
@@ -181,7 +213,7 @@ function modeBody(k) {
       <section class="as-cta${run ? ' live' : ''}">${cta}</section>
       <div class="as-flow">
         <section class="as-stage${inQ ? ' act' : ''}${inM ? ' done' : ''}">
-          <div class="as-sh"><span class="as-n">1</span><div><h4>CLASIFICATORIA</h4><small>${A.qual.games} partidos · dificultad <b>DIFÍCIL</b></small></div>${inM ? '<em class="as-badge">✓ CLASIFICADO</em>' : ''}</div>
+          <div class="as-sh"><span class="as-n">1</span><div><h4>CLASIFICATORIA</h4><small>${A.qual.games} partidos · dificultad <b>SEMI-STAR</b></small></div>${inM ? '<em class="as-badge">✓ CLASIFICADO</em>' : ''}</div>
           <div class="pips">${pips(qh, A.qual.games)}</div>
           <p class="as-rule">Ganá <b>${A.qual.need}</b> de los ${A.qual.games} partidos para pasar a la fase final. Apenas llegás a ${A.qual.need} victorias ya clasificás.</p>
           <div class="as-line"><span>Si clasificás</span>${rewardChips(A.qual.reward)}</div>
@@ -189,7 +221,7 @@ function modeBody(k) {
         </section>
         <div class="as-arrow">›</div>
         <section class="as-stage${inM ? ' act' : ''}${inQ ? ' lock' : ''}">
-          <div class="as-sh"><span class="as-n">2</span><div><h4>FASE FINAL</h4><small>${A.main.games} partidos · dificultad <b class="xt">EXTREMO</b></small></div></div>
+          <div class="as-sh"><span class="as-n">2</span><div><h4>FASE FINAL</h4><small>${A.main.games} partidos · dificultad <b class="xt">SEMI-STAR</b></small></div></div>
           <div class="pips">${pips(mh, A.main.games)}</div>
           <p class="as-rule">Se juegan los ${A.main.games} partidos, ganes o pierdas. <b>Cada victoria te da un premio</b>, cada vez mejor.</p>
         </section>
@@ -244,13 +276,13 @@ function mkGridOnline() {
   L.sort(f.sort === 'pa' ? (a, b) => a.r.price - b.r.price : f.sort === 'pd' ? (a, b) => b.r.price - a.r.price : (a, b) => b.c.o - a.c.o || a.r.price - b.r.price);
   if (!L.length) return '<p class="mute pad">No hay cartas publicadas con esos filtros. Cuando otros jugadores publiquen, aparecen acá.</p>';
   const show = L.slice(0, V.mkLimit);
-  return `<div class="cgrid mk">${show.map(({ r, c }) => { const own = me && r.seller === me; return `<div class="mk-i">${cardEl(c, { act: 'card', badge: U.qty(c.id) ? `<span class="q">x${U.qty(c.id)}</span>` : '' })}<small class="mk-s">${esc(r.seller_name || '—')} · ${U.fmtLeft(Date.parse(r.expires_at) - Date.now())}</small><button type="button" class="u-btn sm gold" data-act="mk-buy-on" data-v="${r.id}" ${own || S.coins < r.price ? 'disabled' : ''}>${own ? 'TUYA' : `${fmt(r.price)} ${coin}`}</button></div>`; }).join('')}</div>${L.length > show.length ? `<div class="more"><button type="button" class="u-btn" data-act="mk-more">VER MÁS (${L.length - show.length})</button></div>` : ''}<small class="mute">${L.length} cartas publicadas por jugadores · tocá ↻ para actualizar</small>`;
+  return `<div class="cgrid mk">${show.map(({ r, c }) => { const own = me && r.seller === me; return `<div class="mk-i"><div class="mk-ask" data-act="mk-ask-on" data-v="${r.id}">${cardEl(c, { badge: U.qty(c.id) ? `<span class="q">x${U.qty(c.id)}</span>` : '' })}</div><small class="mk-s">${esc(r.seller_name || '—')} · ${U.fmtLeft(Date.parse(r.expires_at) - Date.now())}</small><button type="button" class="u-btn sm gold" data-act="mk-ask-on" data-v="${r.id}" ${own || S.coins < r.price ? 'disabled' : ''}>${own ? 'TUYA' : `${fmt(r.price)} ${coin}`}</button></div>`; }).join('')}</div>${L.length > show.length ? `<div class="more"><button type="button" class="u-btn" data-act="mk-more">VER MÁS (${L.length - show.length})</button></div>` : ''}<small class="mute">${L.length} cartas publicadas por jugadores · tocá ↻ para actualizar</small>`;
 }
 function mkGrid() {
   if (U.marketOnline()) return mkGridOnline();
   const L = mkList(), S = U.get(), show = L.slice(0, V.mkLimit);
   if (!L.length) return '<p class="mute pad">No hay cartas con esos filtros ahora. El mercado cambia todos los días.</p>';
-  return `<div class="cgrid mk">${show.map(({ c, p }) => `<div class="mk-i">${cardEl(c, { act: 'card', badge: U.qty(c.id) ? `<span class="q">x${U.qty(c.id)}</span>` : '' })}<button type="button" class="u-btn sm gold" data-act="mk-buy" data-v="${c.id}" ${S.coins >= p ? '' : 'disabled'}>${fmt(p)} ${coin}</button></div>`).join('')}</div>${L.length > show.length ? `<div class="more"><button type="button" class="u-btn" data-act="mk-more">VER MÁS (${L.length - show.length})</button></div>` : ''}<small class="mute">${L.length} cartas a la venta hoy · precios del ${esc(U.marketDay())}</small>`;
+  return `<div class="cgrid mk">${show.map(({ c, p }) => `<div class="mk-i"><div class="mk-ask" data-act="mk-ask" data-v="${c.id}">${cardEl(c, { badge: U.qty(c.id) ? `<span class="q">x${U.qty(c.id)}</span>` : '' })}</div><button type="button" class="u-btn sm gold" data-act="mk-ask" data-v="${c.id}" ${S.coins >= p ? '' : 'disabled'}>${fmt(p)} ${coin}</button></div>`).join('')}</div>${L.length > show.length ? `<div class="more"><button type="button" class="u-btn" data-act="mk-more">VER MÁS (${L.length - show.length})</button></div>` : ''}<small class="mute">${L.length} cartas a la venta hoy · precios del ${esc(U.marketDay())}</small>`;
 }
 
 /* ============================== PLANTILLA ============================== */
@@ -288,12 +320,12 @@ function modalHTML() {
     const pl = m.pl, S = U.get(), q = U.squadCards(), A = S.club, r = U.rating();
     const side = (name, rating, starters, lg) => `<div class="pm-side">${logo(lg)}<h3>${esc(name)}</h3><div class="pm-r"><small>MEDIA</small><b>${rating}</b></div><div class="pm-cards">${starters.map(c => c ? cardEl(c, { cls: 'sm' }) : '<div class="uc sm empty"></div>').join('')}</div></div>`;
     cls = 'wide'; body = `<h2>${esc(pl.sub)} · ${esc(pl.title)}</h2><div class="pm">${side(A.name, r, q.s, A.team)}<div class="pm-vs">VS</div>${side(pl.opp.name, pl.opp.rating, pl.opp.starters, pl.opp.team)}</div>
-      <div class="pm-opt"><span>Cuarto</span>${QLENS.map(([s, n]) => `<button type="button" class="chip${pl.qLen === s ? ' on' : ''}" data-act="qlen" data-v="${s}">${n}</button>`).join('')}<span class="sp"></span><span>Dificultad: <b>${{ easy: 'Fácil', hard: 'Difícil', extreme: 'Extremo' }[pl.diff]}</b></span></div>
+      <div class="pm-opt"><span>Cuarto</span>${QLENS.map(([s, n]) => `<button type="button" class="chip${pl.qLen === s ? ' on' : ''}" data-act="qlen" data-v="${s}">${n}</button>`).join('')}<span class="sp"></span><span>Dificultad: <b>${U.DIFF_NAME[pl.diff] || 'Profesional'}</b></span></div>
       <div class="m-btns"><button type="button" class="u-btn" data-act="close">CANCELAR</button><button type="button" class="u-btn gold big" data-act="kickoff">¡JUGAR!</button></div>`;
   } else if (m.type === 'result') {
     const s = m.sum, pl = m.pl, S = U.get(), aft = pl.meta.after;
     cls = 'result ' + (s.win ? 'win' : 'loss'); body = `<small>${esc(pl.sub)} · ${esc(pl.title)}</small><h1>${m.ab ? 'ABANDONASTE' : s.win ? 'VICTORIA' : 'DERROTA'}</h1>${m.ab ? '' : `<div class="score"><span>${esc(S.club.name)}</span><b>${s.sa}</b><i>-</i><b>${s.sb}</b><span>${esc(pl.opp.name)}</span></div>`}${s.ot ? `<small>${s.ot > 1 ? s.ot + ' tiempos suplementarios' : 'Tiempo suplementario'}</small>` : ''}${pl.mode === 'rookie' && s.win ? `<div class="stars">${'★'.repeat(s.stars)}${'☆'.repeat(3 - s.stars)}</div>` : ''}
-      ${pl.mode === 'dream' && aft ? `<p>División ${aft.div} · ${aft.pts} / ${U.DREAM.perDiv} puntos${aft.streak >= 2 ? ` · 🔥 racha de ${aft.streak}` : ''}</p>` : ''}${pl.mode === 'allstar' && aft ? (aft.phase === 'qual' ? `<p>Clasificatoria: ${aft.qw} de ${U.ALLSTAR.qual.need} victorias · partido ${aft.qg} de ${U.ALLSTAR.qual.games}</p>` : `<p>Fase final: ${aft.w} victorias · ${aft.l} derrotas · partido ${aft.g} de ${U.ALLSTAR.main.games}</p>`) : ''}${s.lines.map(l => `<p class="hl">${esc(l)}</p>`).join('')}
+      ${pl.mode === 'dream' && aft ? `<p>División ${aft.div} · ${aft.pts} / ${U.DREAM.perDiv} puntos${aft.streak >= 2 ? ` · 🔥 racha de ${aft.streak}` : ''}</p>` : ''}${pl.mode === 'allstar' && aft ? (aft.phase === 'qual' ? `<p>Clasificatoria: ${aft.qw} de ${U.ALLSTAR.qual.need} victorias · partido ${aft.qg} de ${U.ALLSTAR.qual.games}</p>` : `<p>Fase final: ${aft.w} victorias · ${aft.l} derrotas · partido ${aft.g} de ${U.ALLSTAR.main.games}</p>`) : ''}${pl.mode === 'champion' && aft ? `<p>Ranking: ${aft.pts} puntos (${aft.delta > 0 ? '+' : ''}${aft.delta}) · ${aft.w}-${aft.l} este mes</p>` : ''}${s.lines.map(l => `<p class="hl">${esc(l)}</p>`).join('')}
       ${m.ab ? '' : `<div class="got">${s.rewards.map(x => `<span>${esc(x)}</span>`).join('')}</div>`}<div class="m-btns"><button type="button" class="u-btn gold" data-act="close">CONTINUAR</button>${pl.mode !== 'allstar' && !m.ab ? '<button type="button" class="u-btn" data-act="again">JUGAR DE NUEVO</button>' : ''}</div>`;
   } else if (m.type === 'pack') {
     cls = 'wide pack'; body = `<small>${esc(m.def.name)}</small><h2>TU SOBRE</h2><div class="pack-grid">${m.cards.map(c => `<div class="pk-c">${cardEl(c, { cls: c.o >= 86 ? 'wo' : '', act: 'card' })}<div class="pk-a"><button type="button" class="u-btn sm" data-act="pk-sell" data-v="${c.id}" ${U.sellable(c.id) > 0 ? '' : 'disabled'}>Vender ${fmt(quickSellOf(c))}</button>${m.tr ? `<button type="button" class="u-btn sm" data-act="sell" data-v="${c.id}" ${U.listable(c.id) > 0 ? '' : 'disabled'}>Mercado</button>` : ''}</div></div>`).join('')}</div><small class="mute">Las cartas ya están en tu colección. Lo que vendas rápido te da monedas al instante.</small><div class="m-btns"><button type="button" class="u-btn gold" data-act="close">GUARDAR TODO</button></div>`;
@@ -303,6 +335,12 @@ function modalHTML() {
       <div class="cm-r"><h2>${esc(L?.name || c.n)}</h2><div class="cm-meta">${logo(c.t)}<span>${teamOf(c.t).name}</span><span class="chip" style="border-color:${t.col};color:${t.col}">${t.name}</span><span class="chip">${POS_NAME[posOf(c)]} · ${posOf(c)}</span><span class="chip">${c.o} OVR</span></div>
       <p class="mute">${L ? `Conectada con el jugador de la base: #${info.number} · ${Math.floor(info.heightIn / 12)}'${Math.round(info.heightIn % 12)}" · ${info.weightLb ? info.weightLb + ' lb' : 'peso sin cargar'}. Los atributos de abajo son los que se usan en el partido (ajustados a la media de la carta).` : 'Esta carta todavía no está conectada con un jugador de la base: los atributos se estiman desde su media y su posición.'}</p>
       <div class="attrs">${Object.entries(groups).map(([g, a]) => `<div><h5>${g}</h5>${a.map(([n, v]) => `<div class="at"><span>${n}</span>${bar(v / 99)}<b>${v}</b></div>`).join('')}</div>`).join('')}</div></div></div><div class="m-btns"><button type="button" class="u-btn" data-act="close">CERRAR</button></div>`;
+  } else if (m.type === 'buy') {                                                  // v72: confirmar la compra (como en FC): antes se compraba al primer toque
+    const c = BY_ID.get(m.id), S0 = U.get(), have = U.qty(c.id), after = S0.coins - m.price, t0 = tierOfCard(c);
+    cls = 'sell buy'; body = `<h2>COMPRAR CARTA</h2><div class="sell-b">${cardEl(c)}<div><b>${esc(c.n)}</b><small>${c.o} OVR · ${posOf(c)} · ${nick(c.t)}</small><span class="chip" style="border-color:${t0.col};color:${t0.col}">${t0.name}</span>
+      <div class="buy-lines"><div><span>Precio</span><b>${fmt(m.price)} ${coin}</b></div><div><span>Tus monedas</span><b>${fmt(S0.coins)} ${coin}</b></div><div class="${after < 0 ? 'bad' : ''}"><span>Te quedarían</span><b>${fmt(after)} ${coin}</b></div></div>
+      ${m.seller ? `<p class="mute">Vendedor: ${esc(m.seller)}</p>` : ''}${have ? `<p class="mute">Ya tenés ${have} copia${have > 1 ? 's' : ''} de esta carta.</p>` : ''}${after < 0 ? '<p class="warn">No te alcanzan las monedas.</p>' : ''}</div></div>
+      <div class="m-btns"><button type="button" class="u-btn" data-act="close">CANCELAR</button><button type="button" class="u-btn" data-act="card" data-v="${c.id}">VER FICHA</button><button type="button" class="u-btn gold big" data-act="${m.row ? 'mk-buy-on' : 'mk-buy'}" data-v="${m.row ? m.row.id : c.id}" ${after < 0 ? 'disabled' : ''}>COMPRAR · ${fmt(m.price)}</button></div>`;
   } else if (m.type === 'sell') {
     const c = BY_ID.get(m.id), [lo, hi] = U.priceRange(c), v = valueOf(c), p = m.price ?? v, cheap = U.marketOnline() ? cheapest(c.id) : 0;
     cls = 'sell'; body = `<h2>VENDER EN EL MERCADO</h2><div class="sell-b">${cardEl(c)}<div><b>${esc(c.n)}</b><small>${c.o} · ${posOf(c)} · ${nick(c.t)}</small><label class="fld">Precio<input type="number" data-act-input="sell-price" min="${lo}" max="${hi}" step="10" value="${p}"></label><div class="chips">${(U.marketOnline() ? [['MÍN', lo], ['MÁX', hi], ...(cheap ? [['IGUALAR', Math.min(hi, Math.max(lo, cheap))]] : [])] : [['MÍN', lo], ['JUSTO', v], ['MÁX', hi]]).map(([n, x]) => `<button type="button" class="chip" data-act="sell-set" data-v="${x}">${n} ${fmt(x)}</button>`).join('')}</div><p class="mute" id="sellInfo">${sellInfo(c, p)}</p></div></div><div class="m-btns"><button type="button" class="u-btn" data-act="close">CANCELAR</button><button type="button" class="u-btn gold" data-act="sell-go">PUBLICAR</button></div>`;
@@ -345,11 +383,14 @@ function onClick(e) {
     case 'play-rookie': modal = { type: 'prematch', pl: U.planRookie(V.stage) }; render(); break;
     case 'play-dream': modal = { type: 'prematch', pl: U.planDream() }; render(); break;
     case 'play-squad': modal = { type: 'prematch', pl: U.planSquad(v) }; render(); break;
+    case 'play-champion': { if (!U.championAvailable()) { toast('Iniciá sesión para jugar Champion Star.'); break; } modal = { type: 'prematch', pl: U.planChampion() }; render(); break; }
+    case 'cs-refresh': V.cs.loaded = false; render(); break;
+    case 'cs-claim': { el.disabled = true; U.claimChampion(v).then(r => { if (r.ok) { V.cs.pending = null; V.cs.loaded = false; modal = { type: 'info', title: `PREMIO DEL PUESTO ${r.rank}º`, lines: r.lines }; } else toast(r.err); render(); }); break; }
     case 'play-allstar': modal = { type: 'prematch', pl: U.planAllStar() }; render(); break;
     case 'as-enter': { const r = U.enterAllStar(); if (!r.ok) toast(r.err); else toast('¡Entraste! Primero la clasificatoria: 2 victorias en 5 partidos.'); render(); break; }
     case 'qlen': modal.pl.qLen = +v; render(); break;
     case 'kickoff': kickoff(modal.pl); break;
-    case 'again': { const p0 = modal.pl, m = p0.mode; modal = null; if (m === 'rookie') modal = { type: 'prematch', pl: U.planRookie(Math.min(Math.max(V.stage, 1), U.get().modes.rookie.stage)) }; else if (m === 'dream') modal = { type: 'prematch', pl: U.planDream() }; else if (m === 'squad') modal = { type: 'prematch', pl: U.planSquad(p0.meta.lvl || 'facil') }; render(); break; }
+    case 'again': { const p0 = modal.pl, m = p0.mode; modal = null; if (m === 'rookie') modal = { type: 'prematch', pl: U.planRookie(Math.min(Math.max(V.stage, 1), U.get().modes.rookie.stage)) }; else if (m === 'dream') modal = { type: 'prematch', pl: U.planDream() }; else if (m === 'squad') modal = { type: 'prematch', pl: U.planSquad(p0.meta.lvl || 'facil') }; else if (m === 'champion') modal = { type: 'prematch', pl: U.planChampion() }; render(); break; }
     case 'claim-obj': { const o = U.claimObjective(v); if (o) toast('Recompensa: ' + o.join(' · ')); render(); break; }
     case 'claim-ev': { const o = U.claimEvent(); if (o) modal = { type: 'info', title: 'PREMIO DEL EVENTO', lines: o }; render(); break; }
     case 'claim-wk': { const o = U.claimWeekly(v, +w); if (o) toast('Recompensa: ' + o.join(' · ')); render(); break; }
@@ -364,15 +405,17 @@ function onClick(e) {
       (async () => { const r = U.marketOnline() ? await U.listCardOnline(md.id, pr) : U.listCard(md.id, pr); md.busy = false; if (!r.ok) toast(r.err); else { toast('Carta publicada en el mercado'); modal = null; V.mk = 'mine'; tab = 'mercado'; V.mkRows = null; } render(); })();
       break;
     }
+    case 'mk-ask': { const c = BY_ID.get(v); if (c) { modal = { type: 'buy', id: v, price: U.mktPrice(c) }; render(); } break; }
+    case 'mk-ask-on': { const row = (V.mkRows || []).find(x => x.id === v); if (row && BY_ID.has(row.card_id)) { if (row.seller === Auth.getProfile()?.id) { toast('Esa carta es tuya.'); break; } modal = { type: 'buy', id: row.card_id, price: row.price, row, seller: row.seller_name }; render(); } break; }
     case 'mk-buy-on': {
-      const row = (V.mkRows || []).find(x => x.id === v); if (!row || el.disabled) break; el.disabled = true;
+      const row = (V.mkRows || []).find(x => x.id === v); if (!row || el.disabled) break; el.disabled = true; modal = null;
       (async () => { const r = await U.buyOnline(row); if (r.ok) { toast(`Compraste a ${BY_ID.get(r.id).n} por ${fmt(r.price)}`); done(); } else toast(r.err); V.mkRows = null; render(); })();
       break;
     }
     case 'mk-refresh': V.mkRows = null; render(); break;
     case 'mk': V.mk = v; if (v === 'buy') V.mkRows = null; render(); break;
     case 'mk-more': V.mkLimit += 36; { const g = $('mkGrid'); if (g) g.innerHTML = mkGrid(); } break;
-    case 'mk-buy': { const r = U.buyMarket(v); if (r.ok) { toast(`Compraste a ${BY_ID.get(v).n} por ${fmt(r.price)}`); done(); } else toast(r.err); render(); break; }
+    case 'mk-buy': { modal = null; const r = U.buyMarket(v); if (r.ok) { toast(`Compraste a ${BY_ID.get(v).n} por ${fmt(r.price)}`); done(); } else toast(r.err); render(); break; }
     case 'mk-cancel': {
       const l = S.mkt.find(x => x.uid === v);
       if (l?.online) { (async () => { const r = await U.cancelOnline(v); toast(r.ok ? 'Carta retirada del mercado' : (r.msgs?.[0] || r.err)); render(); })(); }
@@ -415,6 +458,7 @@ async function kickoff(pl) {
   tickT = setInterval(tickFn, 15000); tickFn();
   if (res?.error) { toast('No se pudo iniciar el partido.'); render(); return; }
   const ab = !!res?.abandoned, sum = U.finishMatch(pl, ab ? { abandoned: true } : { scoreA: res.scoreA, scoreB: res.scoreB, ot: res.ot, stats });
+  if (pl.mode === 'champion') V.cs.loaded = false;
   modal = { type: 'result', pl, sum, ab }; render();
   const d = U.takeDone(); if (d.length) toast('Objetivo completado: ' + d[0]);
 }

@@ -18,12 +18,12 @@ export const fmtLeft = ms => { const m = Math.floor(ms / 60000), d = Math.floor(
 /* ------------------------------ sobres ------------------------------ */
 /* pr = probabilidad POR CARTA de cada rareza [Base, Plata, Oro, Élite, Estrella, Leyenda, Ícono].
    Íconos (v65, como en FC 27): solo en los sobres caros y con probabilidad MUY baja (EA muestra "menos del 1%" en sus sobres con Rare Gold; el Pack Rookie no puede traer).
-   Por sobre salen así: Oro ≈ 0,04% · Élite ≈ 0,25% · Especial ≈ 0,9%. Dentro de los íconos, cuanto más alta la media más raro (Jordan 110 es ~25 veces más raro que un 92). */
+   Por sobre salen así: Oro ≈ 0,04% · Élite ≈ 0,25% · Especial (200.000) = 2% (v71). Dentro de los íconos, cuanto más alta la media más raro (Jordan 110 es ~25 veces más raro que un 92). */
 export const PACKS = {
   rookie: { name: 'Pack Rookie', cost: 5000, cur: 'coins', n: 3, min: 0, tr: false, pr: [.935, .060, .0045, .0005, 0, 0, 0], a: '#d08a4a', b: '#3b200c', col: 0xd9a066 },
   oro: { name: 'Pack Oro', cost: 15000, cur: 'coins', n: 4, min: 76, tr: true, pr: [.62, .31, .0665, .003, .0005, 0, .0001], a: '#ffd45a', b: '#6b4a06', col: 0xffd45a },
   elite: { name: 'Pack Élite', cost: 50000, cur: 'coins', n: 5, min: 80, tr: true, pr: [.24, .38, .35, .027, .0028, .0002, .0005], a: '#b06bff', b: '#2a1058', col: 0xb06bff },
-  especial: { name: 'Pack Especial', cost: 200000, cur: 'coins', n: 3, min: 86, tr: true, pr: [0, 0, 0, .90, .096, .004, .003], a: '#4fc3ff', b: '#0b2a5a', col: 0x4fc3ff },
+  especial: { name: 'Pack Especial', cost: 200000, cur: 'coins', n: 3, min: 86, tr: true, pr: [0, 0, 0, .8933, .0957, .004, .00673], a: '#4fc3ff', b: '#0b2a5a', col: 0x4fc3ff },
 };
 export const packChance = (pk, i) => +((1 - Math.pow(1 - pk.pr.slice(i).reduce((a, b) => a + b, 0), pk.n)) * 100).toFixed(1);
 /** Chance (en %) de que el sobre traiga al menos un ícono, con 2 decimales (packChance redondea a 1). */
@@ -76,30 +76,37 @@ export const objById = id => OBJ_BY.get(id);
 
 /* ------------------------------ modos ------------------------------ */
 export const ROOKIE = Array.from({ length: 10 }, (_, i) => ({
-  n: i + 1, rating: Math.round(66 + i * 1.4), diff: i >= 6 ? 'hard' : 'easy',
+  n: i + 1, rating: Math.round(66 + i * 1.4), diff: i < 4 ? 'rookie' : i < 8 ? 'semirookie' : 'pro',
   coins: 300 + i * 100, packs: i === 2 ? ['rookie'] : i === 5 ? ['oro'] : i === 9 ? ['elite'] : [],
 }));
 /** Todo partido terminado paga monedas: 500 por jugarlo, 700 si lo ganás (abandonar no paga). Los premios de cada modo se suman encima. */
 export const MATCH_PAY = { play: 500, win: 700 };
 /** Dream Live (estilo FC): 10 → 1. Racha de victorias = más puntos (2 seguidas ×2, 4 seguidas ×3). Si bajás de 0 puntos descendés (la División 10 no baja). */
 export const DREAM = { perDiv: 15, win: 3, loss: 2, upMin: 4, relegPts: 8, lowest: 10, mult: streak => (streak >= 4 ? 3 : streak >= 2 ? 2 : 1),
-  ratingOf: d => Math.round(72 + (10 - d) * 2.3), diffOf: d => (d >= 8 ? 'easy' : d <= 2 ? 'extreme' : 'hard'),
+  ratingOf: d => Math.round(72 + (10 - d) * 2.3), diffOf: d => (d >= 9 ? 'rookie' : d >= 7 ? 'semirookie' : d >= 5 ? 'pro' : d >= 3 ? 'semistar' : 'allstar'),      // cuanto más subís de división, más difícil (10-9 Rookie · 8-7 Semi-Rookie · 6-5 Profesional · 4-3 Semi-Star · 2-1 All-Star)
   weekly: [[3, { coins: 1000 }], [6, { packs: ['oro'] }], [10, { packs: ['elite'] }], [15, { coins: 5000, packs: ['elite'] }]] };
-/** All-Star Live: entrada 10.000. Clasificatoria de 5 partidos en Difícil (con 2 victorias pasás). Fase final: 10 partidos en Extremo, premio por CADA victoria. */
+/** All-Star Live: entrada 10.000. v71: se juega en Semi-Star (la anteúltima dificultad: muy difícil, pero no tanto como All-Star, que quedó para Champion Star). Clasificatoria de 5 partidos (con 2 victorias pasás). Fase final: 10 partidos, premio por CADA victoria. */
 export const ALLSTAR = { fee: 10000, perDay: 2,           // máximo 2 entradas por día y por usuario (clasificatoria + fase final cuentan como UNA entrada)
-  qual: { games: 5, need: 2, rating: 84, diff: 'hard', reward: { coins: 3000 }, consolation: { coins: 3000 } },
-  /* Fase final: todos los partidos en Extremo, pero el rival es AL AZAR en cada partido (tanto puede tocarte uno flojo como uno muy bueno).
+  qual: { games: 5, need: 2, rating: 84, diff: 'semistar', reward: { coins: 3000 }, consolation: { coins: 3000 } },
+  /* Fase final: todos los partidos en All-Star (la dificultad más alta), pero el rival es AL AZAR en cada partido (tanto puede tocarte uno flojo como uno muy bueno).
      Si abandonás, ese partido cuenta como derrota y el siguiente rival se sortea de nuevo. */
-  main: { games: 10, diff: 'extreme', pool: [[.30, 77, 82], [.40, 83, 88], [.25, 89, 94], [.05, 95, 97]],      // [probabilidad, media mínima, media máxima]
+  main: { games: 10, diff: 'semistar', pool: [[.30, 77, 82], [.40, 83, 88], [.25, 89, 94], [.05, 95, 97]],      // [probabilidad, media mínima, media máxima]
     ratingOf: () => { let q = Math.random(); for (const [p, lo, hi] of ALLSTAR.main.pool) { if ((q -= p) <= 0) return lo + Math.floor(Math.random() * (hi - lo + 1)); } return 90; } },
   /* Premio por la victoria N de la fase final (de la 5.ª en adelante ya son premios grandes). */
   rewards: [{ coins: 3000 }, { coins: 4000 }, { coins: 5000, packs: ['oro'] }, { coins: 8000 }, { coins: 20000, packs: ['elite'] }, { coins: 25000, packs: ['elite', 'elite'] }, { coins: 30000, packs: ['elite', 'elite'] }, { coins: 45000, packs: ['elite', 'especial'] }, { coins: 65000, packs: ['elite', 'especial'] }, { coins: 100000, packs: ['elite', 'especial', 'especial'] }] };
+/** CHAMPION STAR (v71): la dificultad más alta (All-Star). Cada partido suma o resta puntos (los calcula el servidor: supabase/010_champion_star.sql) y el ranking se reinicia cada mes.
+    Al terminar el mes, el TOP 3 reclama un premio grande (monedas y sobres). Hace falta tener cuenta: el ranking es de todos los jugadores. */
+export const CHAMPION = { diff: 'allstar', win: 20, streakBonus: 2, streakMax: 5, bigWin: 5, bigMargin: 15, loss: 8, abandon: 15, ratingMin: 92, ratingMax: 97,
+  top: [{ coins: 1000000, packs: ['especial', 'especial', 'especial', 'elite', 'elite'] }, { coins: 600000, packs: ['especial', 'especial', 'elite'] }, { coins: 300000, packs: ['especial', 'elite', 'elite'] }] };
+export const monthKey = (d = new Date()) => `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}`;                    // el mes del ranking cuenta en UTC (igual que el servidor)
+export const msToMonthEnd = () => { const n = new Date(); return Math.max(0, Date.UTC(n.getUTCFullYear(), n.getUTCMonth() + 1, 1) - n.getTime()); };
+export const monthLabel = k => { const [y, m] = String(k).split('-'); return `${['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'][(+m || 1) - 1]} de ${y}`; };
 export const SQUADB = { levels: [
-  { id: 'facil', name: 'Fácil', rating: 76, diff: 'easy', coins: 400, pts: 1 }, { id: 'normal', name: 'Normal', rating: 83, diff: 'hard', coins: 900, pts: 2 },
-  { id: 'dificil', name: 'Difícil', rating: 89, diff: 'hard', coins: 1800, pts: 3 }, { id: 'extremo', name: 'Extremo', rating: 94, diff: 'extreme', coins: 4000, pts: 4 }],
+  { id: 'facil', name: 'Fácil', rating: 76, diff: 'rookie', coins: 400, pts: 1 }, { id: 'normal', name: 'Normal', rating: 83, diff: 'pro', coins: 900, pts: 2 },
+  { id: 'dificil', name: 'Difícil', rating: 89, diff: 'semistar', coins: 1800, pts: 3 }, { id: 'extremo', name: 'Extremo', rating: 94, diff: 'allstar', coins: 4000, pts: 4 }],
   weekly: [[4, { coins: 1000 }], [10, { packs: ['oro'] }], [20, { packs: ['elite'] }], [35, { coins: 4000, packs: ['elite'] }]] };
-export const EVENT = { name: 'Torneo Élite', target: 1000, reward: { coins: 5000, packs: ['especial'] }, pts: { allstar: 100, dream: 50, squad: 30, rookie: 20 } };
-export const MODE_NAME = { rookie: 'Rookie Battles', dream: 'Dream Live', allstar: 'All-Star Live', squad: 'Squad Battles' };
+export const EVENT = { name: 'Torneo Élite', target: 1000, reward: { coins: 5000, packs: ['especial'] }, pts: { champion: 120, allstar: 100, dream: 50, squad: 30, rookie: 20 } };
+export const MODE_NAME = { rookie: 'Rookie Battles', dream: 'Dream Live', allstar: 'All-Star Live', squad: 'Squad Battles', champion: 'Champion Star' };
 
 /* ------------------------------ estado ------------------------------ */
 const LS = 'basket3d_ut_v1';
@@ -123,7 +130,7 @@ function newState() {
     coins: 5000, gems: 0, xp: 0, col, untr, squad: { s: st.map(c => c.id), b: bn.map(c => c.id) },
     packs: [{ id: 'welcome1', kind: 'rookie', tr: false }, { id: 'welcome2', kind: 'rookie', tr: false }], mkt: [],
     obj: { day: dayKey(), wk: weekKey(), prog: {}, claimed: {}, daily: [] },
-    modes: { rookie: { stage: 1, stars: {} }, dream: { v: 2, div: 10, pts: 0, streak: 0, wk: weekKey(), w: 0, l: 0, claimed: [] }, allstar: { run: null, best: 0, day: { d: '', n: 0 } }, squad: { wk: weekKey(), pts: 0, played: 0, claimed: [] } },
+    modes: { rookie: { stage: 1, stars: {} }, dream: { v: 2, div: 10, pts: 0, streak: 0, wk: weekKey(), w: 0, l: 0, claimed: [] }, allstar: { run: null, best: 0, day: { d: '', n: 0 } }, squad: { wk: weekKey(), pts: 0, played: 0, claimed: [] }, champion: { month: monthKey(), pts: 0, w: 0, l: 0, streak: 0, best: 0 } },
     ev: { wk: weekKey(), pts: 0, claimed: false }, stats: { p: 0, w: 0, l: 0, pts: 0, pk: 0, wo: 0, bought: 0, sold: 0 }, set: { q: 180 },
   };
 }
@@ -357,11 +364,26 @@ export async function cancelOnline(u) {
   try { await rpc('utm_cancel', { p_id: u }); } catch (e) { const m = await syncMarket().catch(() => []); return { ok: false, err: e.message, msgs: m }; }
   S.mkt = S.mkt.filter(x => x !== l); addCard(l.id, true); persist(true); return { ok: true };
 }
+/* v72 · COMPRADORES AUTOMÁTICOS (supabase/011_mercado_bots.sql): sin otros jugadores nadie compraba. Ahora, de a ratos, un bot le compra a ALGUNAS de tus publicaciones online:
+   · solo a ~60 % de las cartas (el resto espera a un jugador real);
+   · tarda lo mismo que una venta simulada (sellMinutes) × 2,5: más barata = más rápido, al precio máximo tarda más de media hora;
+   · el servidor exige 3 minutos publicada y 15 ventas a bots por día como máximo. */
+const BOT_SLOW = 2.5;
+const botWants = l => hash(l.uid + 'bot') % 100 < 60;
+function botDue(l) {
+  const c = BY_ID.get(l.id); if (!c || !l.online || !botWants(l)) return false;
+  const r = (hash(l.uid + 'r') % 1000) / 1000, el = (Date.now() - (l.t0 || Date.now())) / 60000;
+  return el >= Math.max(4, sellMinutes(c, l.price, r) * BOT_SLOW);
+}
+let botMissing = false;
 let syncing = false;
 /** Cobra lo vendido, recupera lo vencido y alinea mis publicaciones con el servidor. Devuelve los avisos para mostrar. */
 export async function syncMarket() {
   if (!S || !marketOnline() || syncing) return []; syncing = true;
   try {
+    if (!botMissing) for (const l of S.mkt.filter(botDue)) {                                        // v72: bots compradores
+      try { await rpc('utm_botbuy', { p_id: l.uid }); } catch (e) { if (/function|schema cache|could not find/i.test(e?.message || '')) { botMissing = true; break; } }
+    }
     const r = await rpc('utm_collect'), msgs = []; let ch = false;
     const nm = id => BY_ID.get(id)?.n || 'Tu carta';
     for (const x of r.sold || []) { S.coins += x.payout; S.stats.sold++; track('sold', 1); S.mkt = S.mkt.filter(l => l.uid !== String(x.id)); msgs.push(`Se vendió ${nm(x.card_id)} por ${fmt(x.payout)} monedas`); ch = true; }
@@ -411,6 +433,8 @@ export const modeState = k => S.modes[k];
 export function planRookie(stage) { const st = ROOKIE[stage - 1]; return plan('rookie', { rating: st.rating, diff: st.diff, title: `Etapa ${stage}`, sub: 'Rookie Battles', meta: { stage }, seed: 'rk' + stage + dayKey() }); }
 export function planDream() { const d = S.modes.dream; return plan('dream', { rating: DREAM.ratingOf(d.div), diff: DREAM.diffOf(d.div), title: `División ${d.div}`, sub: 'Dream Live', meta: { div: d.div } }); }
 export function planSquad(lvlId) { const l = SQUADB.levels.find(x => x.id === lvlId); return plan('squad', { rating: l.rating, diff: l.diff, title: `Nivel ${l.name}`, sub: 'Squad Battles', meta: { lvl: l.id } }); }
+const champRating = () => CHAMPION.ratingMin + Math.floor(Math.random() * (CHAMPION.ratingMax - CHAMPION.ratingMin + 1));
+export function planChampion() { championRoll(); return plan('champion', { rating: champRating(), diff: CHAMPION.diff, title: 'Partido del ranking', sub: 'Champion Star', meta: { month: S.modes.champion.month } }); }
 export function planAllStar() {
   const r = S.modes.allstar.run, A = ALLSTAR;
   if (r.phase === 'qual') return plan('allstar', { rating: A.qual.rating, diff: A.qual.diff, title: `Clasificatoria · partido ${r.qg + 1} de ${A.qual.games}`, sub: 'All-Star Live', meta: { run: true, phase: 'qual' } });
@@ -432,7 +456,7 @@ function allstarApply(win, rw, lines) {
   if (played === 'qual') {
     r.qg++; (r.qh ||= []).push(win ? 'w' : 'l'); if (win) r.qw++; else r.ql++;
     if (r.qw >= A.qual.need) {
-      r.phase = 'main'; after.qualified = true; lines.push(`¡Clasificaste! Ahora vienen ${A.main.games} partidos en Extremo: cada victoria te da un premio.`);
+      r.phase = 'main'; after.qualified = true; lines.push(`¡Clasificaste! Ahora vienen ${A.main.games} partidos en Semi-Star: cada victoria te da un premio.`);
       if (rw) { rw.coins += A.qual.reward.coins; lines.push(`Premio por clasificar: ${A.qual.reward.coins.toLocaleString('es-AR')} monedas`); }
     }
     else if (r.qw + (A.qual.games - r.qg) < A.qual.need) {
@@ -498,6 +522,12 @@ export function finishMatch(pl, result) {
   } else if (m === 'squad') {
     const l = SQUADB.levels.find(x => x.id === pl.meta.lvl), q = S.modes.squad; q.played++;
     if (win) { q.pts += l.pts; rw.coins += l.coins; track('squad_win', 1); evAdd('squad', true); extra.push(`+${EVENT.pts.squad} pts ${EVENT.name}`); lines.push(`+${l.pts} puntos de la semana`); }
+  } else if (m === 'champion') {
+    const c = championRoll(), margin = sa - sb, d = championApply(c, win, margin, false);
+    lines.push(win ? `+${d} puntos del ranking${c.streak >= 2 ? ` · racha de ${c.streak}` : ''}${margin >= CHAMPION.bigMargin ? ' · victoria amplia' : ''}` : `${d} puntos del ranking`);
+    if (win) { evAdd('champion', true); extra.push(`+${EVENT.pts.champion} pts ${EVENT.name}`); }
+    pl.meta.after = { pts: c.pts, delta: d, streak: c.streak, w: c.w, l: c.l };
+    reportChampion(win, margin, false);
   } else if (m === 'allstar') {
     if (win) { evAdd('allstar', true); extra.push(`+${EVENT.pts.allstar} pts ${EVENT.name}`); }
     const after = allstarApply(win, rw, lines); pl.meta.after = after;
@@ -515,8 +545,49 @@ function abandonMatch(pl) {
   S.stats.p++; S.stats.l++;
   if (m === 'dream') { const d = S.modes.dream; const r = dreamApply(d, false, lines); pl.meta.after = { div: d.div, pts: d.pts, streak: 0, mult: 1, gain: 0, up: false, down: r.down }; }
   else if (m === 'allstar') { lines.push('Contó como derrota en el torneo.'); pl.meta.after = allstarApply(false, null, lines); }
+  else if (m === 'champion') { const c = championRoll(), d = championApply(c, false, 0, true); lines.push(`${d} puntos del ranking por abandonar.`); pl.meta.after = { pts: c.pts, delta: d, streak: 0, w: c.w, l: c.l }; reportChampion(false, 0, true); }
   persist();
   return { win: false, sa: 0, sb: 0, stars: 0, lines, rewards: [], ot: 0, abandoned: true };
+}
+
+/* ------------------------------ Champion Star (ranking mensual online) ------------------------------ */
+export const championAvailable = () => !!(Auth.configured && Auth.getProfile()?.id && !Auth.isGuest());
+const csFriendly = m => (/does not exist|schema cache|could not find|relation|function/i.test(m || '') ? 'Falta correr supabase/010_champion_star.sql en Supabase.' : m || 'Error de conexión');
+async function csRpc(fn, args = {}) {
+  const c = await Auth.getClient(); const { data, error } = await c.rpc(fn, args);
+  if (error) throw new Error(csFriendly(error.message)); return data;
+}
+/** Si cambió el mes, el puntaje arranca de cero (el servidor hace lo mismo). */
+function championRoll() { const c = S.modes.champion, mk = monthKey(); if (c.month !== mk) Object.assign(c, { month: mk, pts: 0, w: 0, l: 0, streak: 0, best: 0 }); return c; }
+/** Misma cuenta que el servidor (cs_report): sirve para mostrar el resultado al instante; después manda lo que dice el servidor. Devuelve la variación de puntos. */
+function championApply(c, win, margin, abandon) {
+  const C = CHAMPION, before = c.pts;
+  if (win && !abandon) { const d = C.win + Math.min(c.streak || 0, C.streakMax) * C.streakBonus + (margin >= C.bigMargin ? C.bigWin : 0); c.pts += d; c.w++; c.streak = (c.streak || 0) + 1; c.best = Math.max(c.best || 0, c.streak); }
+  else { c.pts = Math.max(0, c.pts - (abandon ? C.abandon : C.loss)); c.l++; c.streak = 0; }
+  return c.pts - before;
+}
+async function reportChampion(win, margin, abandon) {
+  if (!championAvailable()) return;
+  try {
+    const r = await csRpc('cs_report', { p_win: !!win, p_margin: Math.max(0, Math.round(margin || 0)), p_abandon: !!abandon });
+    const c = S.modes.champion; if (r && r.month === c.month) { c.pts = r.pts; c.w = r.w; c.l = r.l; c.streak = r.streak; c.best = r.best; }
+    persist();
+  } catch (e) { console.warn('Champion Star: no se pudo reportar el partido:', e?.message || e); }
+}
+/** Ranking del mes: { month, rows: [{ rk, name, pts, w, l, me }], me: { rk, pts, w, l, streak, best } | null } */
+export async function championBoard() {
+  const r = await csRpc('cs_board', { p_limit: 30 }), c = championRoll();
+  if (r?.me && r.month === c.month) { c.pts = r.me.pts; c.w = r.me.w; c.l = r.me.l; c.streak = r.me.streak; c.best = r.me.best; persist(); }
+  return r;
+}
+/** ¿Tengo un premio de un mes terminado sin reclamar? → { month, rank } o null */
+export async function championPending() { try { return await csRpc('cs_pending'); } catch (e) { console.warn('Champion Star:', e?.message || e); return null; } }
+export async function claimChampion(month) {
+  try {
+    const r = await csRpc('cs_claim', { p_month: month }), rw = CHAMPION.top[(r?.rank || 0) - 1];
+    if (!rw) return { ok: false, err: 'No quedaste entre los 3 primeros.' };
+    const lines = grant(rw); persist(); return { ok: true, rank: r.rank, lines };
+  } catch (e) { return { ok: false, err: e.message }; }
 }
 
 /* ------------------------------ premios semanales ------------------------------ */
@@ -527,3 +598,5 @@ export function claimWeekly(kind, idx) {
 }
 export function claimEvent() { if (S.ev.claimed || S.ev.pts < EVENT.target) return null; S.ev.claimed = true; const out = grant(EVENT.reward); persist(); return out; }
 export { value, valueOf, quickSell, quickSellOf };
+
+export const DIFF_NAME = { rookie: 'Rookie', semirookie: 'Semi-Rookie', pro: 'Profesional', semistar: 'Semi-Star', allstar: 'All-Star' };
